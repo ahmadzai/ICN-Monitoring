@@ -1,0 +1,4717 @@
+---
+title: "Findings of ICN Monitoring Reported through ODK"
+subtitle: "UNICEF Afghanistan / Polio - Immunization Communication Network (ICN)"
+author: "Wazir Khan Ahmadzai, M&E Officer, UNICEF Polio"
+date: "`r format(Sys.time(), '%d/%m/%Y')`"
+output: 
+  word_document: # Type of format
+    reference_docx: Format_template_word.docx  # Formatting template
+fig_caption: yes  # If figures should include captions
+toc: yes  # Table of contents
+toc-depth: 3  # upto three depths of headings (specified by #, ## and ###)
+classoption: a4paper # Page size
+---
+
+```{r setup_hooks, include = FALSE}
+# General options for code chuncks
+knitr::opts_chunk$set(echo = FALSE, 
+                      comment = "",
+                      warning = FALSE,
+                      message = FALSE)
+
+# Formatting of thousand and decimal separators
+knitr::knit_hooks$set(inline = function(x) {
+prettyNum(x, decimal.mark = ".")
+})
+``` 
+```{r filter_params}
+#---------------------------- Setting For The Report ----------------------#
+# format: 2018-12-31 (Y-mm-dd)
+start_date <- "2018-11-01"  # Start date, from where report will include submissions
+
+end_date <- "2018-11-30"    # End date, till which report will have submissions ""
+
+filter_regions <- c("Central") # or single or multiple East, West, Southeast, South, Central, Northeast, North
+
+filter_provinces <- c("All") # or single or muliple provinces e.g. c("Kunar", "Kabul")
+
+filter_positions <- c("TPM") # or single or multiple e.g. c("TPM", "ICN", "UNICEF") 
+
+printmap <- TRUE  # or TRUE|FALSE if not needed
+
+translate_comments <- FALSE # or FALSE if not needed
+
+save_excel <- FALSE # if you need excel file of the clean data, make it TRUE then. 
+
+clean_env <- TRUE # to clean environment at the end
+
+#--------------------------- End of Settings -----------------------------#
+start_time <- Sys.time()
+```
+
+
+```{r packages, warning=FALSE, message=FALSE}
+# Loads necessary packages
+## ipak function: install and load multiple R packages.
+## check to see if packages are installed. Install them if they are not, then load them into the R session. (source: https://gist.github.com/stevenworthington/3178163)
+
+ipak <- function(pkg){
+    new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+    if (length(new.pkg)) 
+        install.packages(new.pkg, dependencies = TRUE)
+    sapply(pkg, require, character.only = TRUE)
+}
+
+# Lists required packages
+packages <- c("httr", "tidyverse", "knitr",
+              "WriteXLS", "lubridate", "readxl", "pander",
+              "scales", "reshape2", "bayesboot", "stringr",
+              "Hmisc", "lazyeval", "zoo", "ggmap", "stopwords",
+              "rmarkdown", "wordcloud", "tm", "treemapify", 
+              "english", "ggpubr", "vcdExtra", "googleLanguageR",
+              "flextable", "officer"
+              )
+
+# Package officer will also need Pandoc and that should be installed
+# separately in the OS
+
+# Loads packages
+invisible(ipak(packages))
+
+# Removes intermediary objects from the environment
+rm(ipak)
+
+```
+
+```{r change_date_types}
+# Filters dates of reporting 
+## Please change the parameter filters in the yaml header at the top of this rmarkdown file if you want to change date ranges.
+
+## Start date (format: YYYY-MM-DD)
+start_date  <-  lubridate::ymd(start_date)
+
+
+## End date (format: YYYY-MM-DD). Default = day of report generation
+end_date  <-  lubridate::ymd(end_date)
+
+```
+
+```{r attaching_function, warning=FALSE}
+# Attache the function to clean the json data and convert it to data-table
+source("ext_files/functions.R")
+```
+
+```{r func_download_data, message=FALSE}
+download_data <- function() {
+  
+  source("ext_files/login_credentials.R")
+
+  library(httr)
+  formid = 335169
+  ## Creates URL
+  url <- paste("https://api.ona.io/api/v1/data/", formid, sep = "")
+  
+  ## Downloading data from ONA for each form
+  kpi <-  httr::GET(url, 
+                    add_headers(Authorization = paste("Token", auth_key, " ")))
+  # convert json data to datatable
+  return(fromona(kpi))
+}
+
+
+```
+
+
+```{r load_form_data, warning=FALSE, message=FALSE}
+############################################## Loading Data from ONA ICN
+
+# Load Offline Data First and check if the data is already existed for the 
+# selected data (mainly start_date) 
+# below code will load kpi_df 
+datafile <- "clean_files/icn_monitoring.rda"
+if(file.exists(datafile)) {
+  # this will load kpi_tbl
+  load(datafile)
+  
+  library(dplyr)
+  library(lubridate)
+
+  if (!is.null(r <- get0("kpi_tbl", envir = environment())))  {
+    
+    rm(r) # just remove r
+    tmp_df <- kpi_tbl %>%
+      filter(internal_date >= start_date & internal_date <= end_date) %>%
+      select(internal_date)
+    # maybe this is not a perfect solution but still 
+    # it works
+    if(nrow(tmp_df) < 1) {
+      # download new data
+      kpi_tbl <- download_data()
+    }
+    
+  } else {
+    kpi_tbl <- download_data()
+  }
+  
+} else {
+  
+  kpi_tbl <- download_data()
+}
+
+
+# remove auxi data
+rm(kpi, tmp_df)
+
+# Save the data in RDA/CSV file before further cleaning the data
+save(kpi_tbl, file = "clean_files/icn_monitoring.rda")
+write.csv(kpi_tbl, file = "clean_files/icn_monitoring.csv", row.names = FALSE)
+
+# declare kpi_df for further operation
+kpi_df <- kpi_tbl
+
+```
+
+```{r filter_by_region, warning=FALSE}
+# we filter date source if region filter was applied
+if(filter_regions == "All") {
+  
+  kpi_df <- kpi_df
+  
+} else {
+  
+  kpi_df <- kpi_df %>%
+    filter(internal_region %in% filter_regions)
+}
+
+```
+
+
+```{r further_cleaning, warning=FALSE}
+# Removes uninteresting variables
+kpi_df <- kpi_df %>%  
+  select(-attachments, -bamboo_dataset_id, -tags, -uuid,
+         -notes, -total_media, -media_count, -media_all_received,
+         -formhub_uuid) %>%
+  # Reorders columns
+  select(internal_respondent, internal_monitorname, today, 
+         internal_province, internal_district, internal_subdistrict,
+         internal_cluster, everything()) 
+
+# Adjusts names of variables with repeated characters
+names(kpi_df) <- gsub(x = names(kpi_df), 
+                   pattern = "cip_cip_", 
+                   replacement = "cip_")
+
+# Imports form data (sheet choices)
+library(readxl)
+choices <- read_excel(path = "ext_files/icn_monitoring_form.xlsx", 
+                     sheet = "choices") %>% suppressMessages()
+# Finds rows for which all columns are NA 
+row.all.na <- apply(choices, 1, function(x){all(is.na(x))})
+choices <- choices[!row.all.na,]
+
+# Creates subset with province and district
+provinces <- choices %>% 
+  filter(list_name %in% c("province")) %>% 
+  select(-province, -district)
+
+districts <- choices %>% 
+  filter(list_name %in% c("district")) %>% 
+  mutate(region = ifelse(province %in% provinces$name, 
+                         provinces$region, region)) %>% 
+  mutate(province = ifelse(province %in% provinces$name, 
+                           provinces$`label::English`, province))
+# Creates variables with province and district names in the originol data-set
+kpi_df <- provinces %>% 
+  rename(internal_province = name) %>% 
+  merge(., kpi_df, by="internal_province") %>% 
+  tbl_df() %>% 
+  rename(province_name = `label::English`) %>% 
+  select(-list_name, -starts_with("label::")) 
+  
+  
+kpi_df <- districts %>% 
+  select(name, `label::English`) %>% 
+  rename(internal_district = name) %>% 
+  merge(., kpi_df, by="internal_district") %>% 
+  tbl_df() %>% 
+  rename(district_name = `label::English`) %>%
+  # change the long name of district to short one 
+  mutate(district_name = ifelse(district_name == "Daman Takhtapol Shaga", 
+                                "Daman", district_name))
+
+# Adjusts labels of variable internal_other_position
+library(stringr)
+kpi_df <- kpi_df %>% 
+  mutate(internal_other_position = 
+           ifelse(
+             tolower(str_squish(internal_other_position)) == "third party monitor", 
+                  "TPM", 
+             ifelse(
+                tolower(str_squish(internal_other_position)) == "tpm monitor",
+                "TPM",
+                ifelse(
+                    tolower(str_squish(internal_other_position)) == "monitoring tpm",
+                    "TPM",
+                    ifelse(
+                      tolower(str_squish(internal_other_position)) == "dmo",
+                      "TPM",
+                  internal_other_position)
+                )
+             )
+           )
+         ) %>% 
+  
+  # Adjusts typing mistake in the form
+  
+  mutate(cip_affiliation = ifelse(cip_affiliation == "Medial_doctor",
+                                  "Medical_doctor", cip_affiliation)) %>% 
+
+  # Trimming empty spaces
+  mutate(internal_monitorname = str_squish(internal_monitorname)) %>% 
+            
+  ## Adjusts variable name to avoid querying problems
+  rename(supporter_sm = sm_supporter)
+
+  # replace the other position with the value sepecied in the other position text box
+kpi_df <- kpi_df %>%
+  mutate(internal_position = 
+         ifelse(
+              (tolower(str_squish(internal_position)) == "tpm_monitor" |
+               tolower(str_squish(internal_position)) == "extender_monitor"),
+                  "TPM", 
+             ifelse(
+                (tolower(str_squish(internal_position)) == "pco" |
+                 tolower(str_squish(internal_position)) == "dco" |
+                 tolower(str_squish(internal_position)) == "other_icn_supervisors"),
+                "ICN",
+                ifelse(
+                    tolower(str_squish(internal_position)) == "unicef_staff",
+                    "UNICEF",
+                    ifelse(
+                      tolower(str_squish(internal_position)) == "other",
+                      internal_other_position,
+                      internal_position
+                      )
+                )
+             )
+           )
+         ) 
+
+# kpi_df %>% select(internal_monitorname, district_name, imei) %>% 
+#   distinct(imei, internal_monitorname)
+########################################################################################
+#                                                                                      #
+#         There's still room for monitors name cleaning                                #
+#
+########################################################################################
+
+# creates custom function for names (source: https://stackoverflow.com/questions/6364783/capitalize-the-first-letter-of-both-words-in-a-two-word-string)
+
+# Adjusts capitalistaion of monitor names using custom function
+kpi_df$internal_monitorname <- sapply(tolower(kpi_df$internal_monitorname), capitalize)
+
+# Creates GPS coordinates in two columns lon (longitude) and lat (latitude)
+kpi_df <- tidyr::separate(kpi_df, geolocation, into = c( "lat", "lon"), sep = ", ")
+
+# Cleans columns with GPS coordinates
+kpi_df$lon <- gsub("\\)", "", kpi_df$lon) %>% as.numeric()
+kpi_df$lat <- gsub("c\\(", "", kpi_df$lat) %>% as.numeric()
+
+# replace _ in subdistricts
+kpi_df$internal_subdistrict = gsub("_", " ", kpi_df$internal_subdistrict)
+
+library(lubridate)
+# Creates variable with count of interviews per submission
+kpi_df <- kpi_df %>%
+  mutate(interviews = sapply(strsplit(internal_respondent, " "), length), 
+  
+  # Creates variable with month
+  month = floor_date(ymd(kpi_df$internal_date), "month")
+  ) %>% 
+  
+  # Creates cluster ids
+  mutate(cluster = paste(ifelse(district_name == internal_subdistrict, 
+                                district_name, paste(district_name, "-",
+                                                     internal_subdistrict)),
+                                internal_cluster, sep ="-"),
+         ## Creates village ids
+         team_code = paste0(cluster, "-[" , 
+                            str_squish(internal_village), "-", 
+                            internal_team_number, "]")
+         )  %>%
+  mutate(internal_date = ymd(internal_date)) %>% 
+    # Filters dates of reference
+    filter(internal_date >= ymd(start_date)) %>% 
+    filter(internal_date <= ymd(end_date)) 
+
+# Removes auxiliary dataframes from the environment
+rm(districts, provinces, row.all.na)
+
+# Converts text data to UTF8
+kpi_df$final_suggestion <- enc2utf8(as.character(kpi_df$final_suggestion))
+kpi_df$final_notes <- enc2utf8(as.character(kpi_df$final_notes))
+
+```
+
+```{r filter_by_provinces}
+# Sets provinces for filtering
+## Please change the parameter filters in the yaml header at the top of this rmarkdown file if you want to change the province coverage.
+
+if (filter_provinces == "All") {
+  
+ kpi_df <- kpi_df # No filters applied
+
+ } else {
+    # Filters provinces
+    kpi_df <- kpi_df %>% 
+     filter(province_name %in% filter_provinces)
+    
+}
+
+```
+
+```{r filter_by_position, warning=FALSE, message=FALSE}
+# Filter by Position
+
+if (filter_positions == "All") {
+  
+ kpi_df <- kpi_df # No filters applied
+
+ } else {
+    # Filters position
+    kpi_df <- kpi_df %>% 
+     filter(internal_position %in% filter_positions)
+    
+}
+
+```
+
+```{r filter_test_submissions, warning=FALSE, message=FALSE}
+
+kpi_df <- kpi_df %>%
+  filter(!str_detect(tolower(internal_monitorname), "test|tst"))
+
+```
+
+
+```{r clusters_status, warning=FALSE, message=FALSE}
+# Creates variable with counts of clusters represented in the dataset
+clusters <-  kpi_df  %>% 
+  #group_by(internal_cluster, internal_district, district_name, province_name, region) %>% 
+  my_group_by(.) %>%
+  dplyr::summarise(count = dplyr::n(), interviews = sum(interviews)) %>% 
+  ## Formats as dataframe and then tibble to avoid groupping issues
+  as.data.frame() %>% as_tibble() %>%
+  #arrange(region, province_name, internal_district, internal_cluster)
+  my_arrange_by()
+
+
+library(dplyr)
+# Creates a new dataframe with one column for each key indicator (TRUE = issues)
+clusters_ind <- clusters %>% 
+  mutate(
+    # Monitor confirms the social mobiliser was present / could be found during the monitoring 
+    prob_ind1 = indissue(varname = "availability", dataframe = kpi_df,
+                       issues = c("Not_Working")),   # this is wrong the issue should be Not_working
+    
+     
+    # Supervisors, CIP and community members report knowing social mobilisers working in the area.
+    prob_ind2 = indissue(varname = "knowsm", dataframe = kpi_df,
+                        issues = c("Disagree", "Strongly_disagree")),
+    
+    
+    # Community Influencing People (CIPs) reports knowing Cluster Communication Supervisor (CCS).
+    prob_ind3 = indissue(varname = "knowccs", dataframe = kpi_df,
+                        issues = c("No")),
+    
+    
+    # SM is resident of the village / Nahia.
+     prob_ind4 = indissue(varname = "resident", dataframe = kpi_df, 
+                        issues = c("No")), 
+    
+    
+    # SM age between 18 and 50 years old
+     prob_ind5 = indissue(varname = "sm_age", dataframe = kpi_df,
+                        issues = c("17_or_less")),
+
+    
+    # SM reporting to have received both the basic training for social mobilisers (2 days) and the Pre-campaign training. 
+    prob_ind6 =  indissue(varname = "sm_training", dataframe = kpi_df,
+                        issues = c("No_training"))) 
+
+# Futher calculating indicators
+clusters_ind <- clusters_ind %>% 
+  mutate(  
+    # SM reporting having received inputs (supplies and IEC materials).
+    prob_ind7 = indissue_count(dataframe = kpi_df, "sm_inputs",
+                         min = 3, issues = c("Other", "None_of_the_above", "Not_sure")),    
+    
+     # Level of coordination between social mobilisers and the vaccination team.
+    prob_ind8 = indissue(varname = "coordination", dataframe = kpi_df,
+                             issues = c("Poor", "Very_poor")),
+    
+    # Monitoring visit have accessed SM field books.
+     prob_ind9 = indissue(varname = "fieldbookaccess", dataframe = kpi_df,
+                        issues = c("No")),    
+    
+    # Quality of the registration / documentation by SM in their field books as reported by monitors.
+    prob_ind10 = indissue(varname = "fieldbookqual", dataframe = kpi_df,
+                             issues = c("Poor", "Very_poor")),
+     
+    # Is the number of unvaccinated children from the most recent campaign recorded in the fieldbook or summary sheets?
+     prob_ind11 = indissue(varname = "monitor_vaccinerecords", dataframe = kpi_df,
+                            issues = c("No")),
+
+
+    # Reported issues with field book in the area as from SM responses.
+     prob_ind12 = indissue(varname = "monitor_issues", dataframe = kpi_df,
+                           issues = c("OPV_not_updated_or_incomplete", 
+                                      "Incorrect_use_of_symbols", 
+                                      "Incomplete_camp_summ_sheet")))
+    
+clusters_ind <- clusters_ind %>% 
+  mutate(     
+    # Frequency that social mobilisers conduct house by house visits as reported by CIPs.
+    prob_ind13 = indissue_count(dataframe = kpi_df, "visitfreq", min = 1, 
+                                issues = c("Once_a_month", "Less_regularly_than_once_a_month",
+                                             "Not_at_all", "Not_sure", "Not_applicable")),
+    
+    
+    # Opinions concerning the statement that "social mobilisers do a good job in providing information on Polio vaccination".
+    prob_ind14 = indissue(varname = "smgoodjob", dataframe = kpi_df,
+                        issues = c("Disagree", "Strongly_disagree")),
+    
+    
+    # Opinions concerning the statement that "social mobiliser effectively supported vaccination teams during the campaign".
+    prob_ind15 = indissue(varname = "campsupport", dataframe = kpi_df, 
+                        issues = c("Disagree", "Strongly_disagree")),
+    
+    
+    # Opinions concerning the statement "social mobiliser is respected by the community" .
+    prob_ind16 = indissue(varname = "respected", dataframe = kpi_df,
+                        issues = c("Disagree", "Strongly_disagree")),
+    
+    
+    # Opinions concerning the statement that "social mobiliser is polite to community members and has good manners" .
+    prob_ind17 = indissue(varname = "manners", dataframe = kpi_df,
+                        issues = c("Disagree", "Strongly_disagree")),
+
+    
+        # Opinions by CIPs concerning the statement "The Community Influential Person (CIP) indeed has the potential to influence the community in support of the programme".
+    prob_ind18 = indissue(varname = "cip_influence", dataframe = kpi_df,
+                        issues = c("Disagree", "Strongly_disagree")),
+    
+    
+    # Opinions by CIPs concerning the statement "You feel that your are sufficiently involved and consulted in discussions related to Polio and health in this area".
+    prob_ind19 = indissue(varname = "involvement", dataframe = kpi_df,
+                        issues = c("Disagree", "Strongly_disagree")),
+    
+    
+    # Opinions concerning the statement  "All under five children should be vaccinated every time a campaign takes place".
+    prob_ind20 = indissue(varname = "_vaccination", dataframe = kpi_df, 
+                        issues = c("Disagree", "Strongly_disagree")),
+    
+    
+    # Opinions concerning the statement that "social mobilisers have put enough effort to resolve vaccination refusals (e.g. repeat visits, seek support from influencers and supervisors)".
+    prob_ind21 = indissue(varname = "smconvince", dataframe = kpi_df,
+                        issues = c("Disagree", "Strongly_disagree")),
+    
+    
+    # Opinions concerning the statement  "There are community influencers in this area who do not think that under-five children should be vaccinated every time". 
+    prob_ind22 = indissue(varname = "cip_vaccination_othercip", dataframe = kpi_df,
+                        issues = c("Agree", "Strongly_agree")), # Inverted scale due to question
+    
+    
+    # Opinions concerning the statement  "There are community influencers in this area who do not think that under-five children should be vaccinated every time". 
+    prob_ind23 = indissue(varname = "challenges", dataframe = kpi_df, 
+                        issues = c("Concerns", "Opposition", "Tough_refusals", 
+                                   "Mobile populations", "CIP_not_supportive")),
+    
+    
+    # Reported issues with SM in the area.
+    prob_ind24 = indissue(varname = "smissues", dataframe = kpi_df,
+                           issues = c("Inadequate_behaviour", "Low_presence",
+                                      "Low_monilisation", "Not_accepted")),
+    
+    
+    # Reported access restrictions due to external factors.
+    prob_ind25 = indissue(varname = "sm_access", dataframe = kpi_df,
+                    issues = c("Can_visit_few_houses",
+                               "Can_visit_very_few_houses",
+                               "Cannot_undertake_visits_at_all")),
+    
+    
+    # Reasons for access restrictions is not insecurity.
+    prob_ind26 = indissue(varname = "restricted_access", dataframe = kpi_df, 
+                           issues = c("Security_risk", "Not_accepted_by_community")))
+    
+   # Futher calculating indicators
+clusters_ind <- clusters_ind %>% 
+  mutate( 
+    # Social mobilisers reporting delay in payments (Up to which month have you already been paid for?).
+    prob_ind27 = indissue_monthcount(varname = "lastpay", dataframe = kpi_df, max = 2),
+    
+    
+    # Payment amount reported by social mobilisers is at least 7,500 AFN. Optional question.
+    prob_ind28 = indissue_num_min(varname = "salary", dataframe = kpi_df,
+                             respondent = "SM", min = 7500), 
+    
+    
+    # Quality of monitoring – mobile phone data.
+    prob_ind29 = indissue_phone(varname = "cellphone", dataframe = kpi_df),
+    
+     
+    # SM reporting to have received guidance / coaching from CCS, DCO or PCO.
+    prob_ind30 = indissue(varname = "sm_supporter", dataframe = kpi_df,
+                          issues = c("No_support", "Not_sure", "Other")),
+    
+    # SM reporting on-the-job support in last two weeks.
+    prob_ind31 = indissue_count(dataframe = kpi_df, "sm_support",
+                         min = 2, issues = c("Other", "Not_sure")),
+    
+    # Number of supportive supervision days in the last 30 days by CCS and DCO 
+    # (Sum of supportive supervision days >= 4 days).
+    prob_ind32 = indissue_num_min(varname = "supportdays", 
+                                  dataframe = kpi_df,
+                             respondent = "Supervisor", min = 4),
+    
+       # Opinions concerning the statement that "the Cluster Communication Supervisor (CCS) visits the area at least once a month to provide information on vaccination and support to the social mobiliser" .
+    prob_ind33 = indissue(varname = "ccspresent", dataframe = kpi_df, 
+                        issues = c("Disagree", "Strongly_disagree"))
+
+  ) 
+
+  # Creates new variable with count of indicators with problems
+  clusters_ind$ind_problems <- clusters_ind %>% 
+    select(starts_with("prob_ind")) %>% 
+    mutate(ind_problems = rowSums(., na.rm = T) %>% 
+             as.integer(.)
+           ) %>% 
+  select(ind_problems) %>% 
+    unlist()
+  
+  # Adds column with counts of indicators suggesting problems 
+  clusters$ind_problems <- clusters_ind$ind_problems
+
+# Removes auxiliary variable count    
+clusters <- clusters %>% select(-count) %>% 
+  # Arragens by district name
+  arrange(region, province_name, district_name, internal_subdistrict,
+          internal_cluster) %>% 
+  # Adds variable with row counts
+  mutate(`#` = 1:nrow(.)) %>% 
+  # Reorders columns
+  select(region, province_name, district_name, 
+         internal_subdistrict, internal_cluster, 
+         ind_problems, interviews)
+```
+
+
+```{r metadata_coreind, warning=FALSE, message=FALSE}
+# Imports indicator metadata 
+metadata <- read_excel(path = "ext_files/KPI_metadata.xlsx") %>% 
+  suppressMessages()
+
+# Creates vector with names of core indicators
+coreind <- metadata %>%
+  filter(`Core indicator` == "Yes") %>% 
+  select(`Code identification (RMarkdown)`) %>% 
+  unlist() %>% 
+  as.character()
+
+# Selects core indicators and auxiliary variables
+clusters_coreind <- clusters_ind %>% 
+  select(internal_cluster:interviews, ind_problems, coreind)
+
+# Creates new variable with count of indicators with problems
+clusters_coreind$coreind_problems <- clusters_coreind %>% 
+  select(starts_with("prob_ind")) %>% 
+  mutate(coreind_problems = rowSums(., na.rm = T) %>%
+           as.integer(.)
+           ) %>% 
+  select(coreind_problems) %>% 
+  unlist()
+
+# Adds count of core indicators to clusters_ind
+clusters_ind <- clusters_ind %>% 
+  mutate(coreind_problems = clusters_coreind$coreind_problems)
+
+# Adds count of core indicators to clusters
+clusters <- clusters_ind %>% 
+  mutate(coreind_problems = clusters_coreind$coreind_problems)
+
+```
+
+
+
+```{r saves_cluster_csv, warning=FALSE, message=FALSE}
+# Core indicators
+## Converts logical (FALSE/TRUE) to numeric (FALSE = 0 / TRUE = 1)
+clusters_coreind_num <- clusters_coreind %>%
+   mutate_at(.,
+     vars(starts_with("prob_ind")),
+     funs(as.numeric(.))
+     ) 
+
+# All indicators
+## Converts logical (FALSE/TRUE) to numeric (FALSE = 0 / TRUE = 1)
+clusters_ind_num <- clusters_ind %>%
+   mutate_at(.,
+     vars(starts_with("prob_ind")),
+     funs(as.numeric(.))
+     )
+
+# Set dynamic names for the file to be saved
+csvfile <- paste("clean_files/all_kpi_clusterdata_", start_date, "_", 
+                 end_date, ".csv", sep = "")
+# Saves auxiliary cluster dataframe as CSV
+write.csv(clusters_ind_num, file = csvfile, row.names = FALSE, na = "")
+csvfile <- paste("clean_files/core_kpi_clusterdata_", start_date, "_", 
+                 end_date, ".csv", sep = "")
+write.csv(clusters_coreind_num, file = csvfile, append = FALSE)
+
+```
+
+
+# Key figures
+
+- **Start date of this report**: `r start_date %>% format("%d of %B %Y")`
+
+- **End date of this report**: `r ymd(kpi_df$internal_date) %>% max() %>% format("%d of %B %Y") # The end date can be changed if desired. For that, please  see code chunk "filter_dates" above.` 
+
+- **Numbers of provinces in this report**: `r ifelse((length(unique(kpi_df$province_name)) == 1), paste(kpi_df %>% select(province_name) %>% unique() %>% nrow(), "province."), paste(kpi_df %>% select(province_name) %>% unique() %>% nrow(), "provinces."))` 
+
+- **Numbers of districts in this report**: `r ifelse((length(unique(kpi_df$district_name)) == 1), paste(kpi_df %>% select(district_name) %>% unique() %>% nrow(), "district."), paste(kpi_df %>% select(district_name) %>% unique() %>% nrow(), "districts."))`
+
+- **Number of clusters in this report**: `r clusters %>% nrow()` clusters
+
+- **Number of submissions**: `r clusters_coreind$count %>% sum()` submissions
+
+- **Total respondents in household group interviews**: `r kpi_df %>% select(hh_participants_hh) %>% mutate(hh_participants_hh = suppressWarnings(as.numeric(hh_participants_hh))) %>% unlist() %>% sum(., na.rm = TRUE)` respondents.
+
+- **Total number of respondents in individual and group interviews**: `r kpi_df %>% filter(!grepl("Households", internal_respondent)) %>% nrow() + kpi_df %>% select(hh_participants_hh) %>% mutate(hh_participants_hh = suppressWarnings(as.numeric(hh_participants_hh))) %>% unlist() %>% sum(., na.rm = TRUE)` respondents.
+
+
+######
+
+# Overall monitoring results
+
+
+```{r lineplot_submission_dates, fig.width = 8, fig.height=4, message=FALSE, warning=FALSE}
+# Plots a line with submissions by date
+library(ggplot2)
+## Prepares dataset
+kpi_df %>% 
+  select(internal_date) %>% 
+  mutate(internal_date = ymd(internal_date)) %>% 
+  rename(Date = internal_date) %>% 
+  group_by(Date) %>% 
+  dplyr::summarise(Submissions = n()) %>% 
+  ungroup() %>% 
+  
+  ## Prepares plot
+  ggplot(., aes(x = Date, y = Submissions)) + 
+  ## Defines geometry line
+  geom_line(colour="skyblue", size = 1.7) +
+  ## Sets theme / design
+  theme_linedraw() +
+  ## Defines geometry points
+  geom_point(colour="darkblue") +  
+  ## Removes label of x axix
+  xlab("") + 
+  ## Sets label for y axis
+  ylab("Submissions") + 
+  # Chnages format of dates in the plot display
+  scale_x_date(date_labels = "%d %b %y", date_breaks  ="4 day") + 
+  # Sets options font formatting options
+  theme(
+    axis.text.x = element_text(colour="grey20", size=9,angle=80,hjust=.5,vjust=.5,face="plain"),
+    axis.text.y = element_text(colour="grey20", size=9,angle=0,hjust=1,vjust=0,face="plain"),
+    axis.title.y = element_text(colour="grey20",size=10,angle=90,hjust=.5,vjust=.5,face="plain"),
+        plot.title = element_text(size = 14, face = "bold", vjust=1.2)) +
+  ## Sets title and subtitle
+  ggtitle(stringr::str_wrap("Submissions by date", width = 60),
+          subtitle =  paste("N = ", 
+                            format(nrow(kpi_df), big.mark=","), " submissions",
+                            " from ", 
+                            start_date %>% format("%d %B %Y"), 
+                            " to ", 
+                            end_date %>% format("%d %B %Y"),
+                            sep = "")) +
+  # Adjust scales to integer numbers
+  scale_y_continuous(breaks = function(x) unique(floor(pretty(seq(0, (max(x) + 1) * 1.1))))) 
+
+```
+
+
+The line plot above shows submissions by date for the time period of this report (`r paste("from", start_date %>% format("%d %B %Y"), "to", end_date %>% format("%d %B %Y"))`). The dataset includes `r clusters_coreind$count %>% sum()` submissions with a total of `r sum(kpi_df$interviews)` interviews with social mobilisers (SM), community influential people (CIP), households (HH) and supervisors (SUP). Each submission includes on average `r english::english(round(mean(kpi_df$interviews, na.rm = TRUE)))` interviews  (min.: `r min(kpi_df$interviews)` interview / max.: `r max(kpi_df$interviews)` interviews per submission). Interviews with household representatives are group interviews (`r kpi_df %>% filter(grepl("Households", internal_respondent)) %>% nrow()` household interviews) with a total of `r kpi_df %>% select(hh_participants_hh) %>% mutate(hh_participants_hh = suppressWarnings(as.numeric(hh_participants_hh))) %>% unlist() %>% sum(., na.rm = TRUE)` household representatives (on average `r kpi_df %>% select(hh_participants_hh) %>% mutate(hh_participants_hh = suppressWarnings(as.numeric(hh_participants_hh))) %>% unlist() %>% mean(., na.rm = TRUE) %>% round() %>% english()` participants per household group interview). All the interviews with other key stakeholders were individual interviews (`r kpi_df %>% filter(!grepl("Households", internal_respondent)) %>% nrow()` individual interviews). Considering both individual and group interviews, a total of `r kpi_df %>% filter(!grepl("Households", internal_respondent)) %>% nrow() + kpi_df %>% select(hh_participants_hh) %>% mutate(hh_participants_hh = suppressWarnings(as.numeric(hh_participants_hh))) %>% unlist() %>% sum(., na.rm = TRUE)` respondents have been consulted including monitors (observation reports).
+
+The following table presents a summary of key figures for this report. The column *Indicators of problems* presents how many indicators of those available for the selected data range suggest the existence of problems (not meeting the standards of the ICN Key Performance Indicators). The table includes number of interviews with the key stakeholders and number of indicators with problems (Problems).
+
+#####
+
+
+**Table 1: `r paste("Number of interviews by respondent category and number of problems by district and cluster (from", start_date %>% format("%d %B %Y"), "to", end_date %>% format("%d %B %Y"))`)**
+
+```{r table_1_data, message = FALSE, warning = FALSE}
+# Prepares dataset for table with key figures by cluster
+tableone <- kpi_df %>% 
+  select(region, province_name, district_name, internal_subdistrict,
+         internal_district, internal_cluster, internal_respondent) %>% 
+  tidyr::separate(., col = internal_respondent, into = as.character(1:10), sep = "\\ ") %>%
+  select_if(~sum(!is.na(.)) > 0) %>% 
+  reshape2::melt(id.vars = c("region", "province_name",
+                             "district_name", "internal_district", 
+                             "internal_subdistrict", "internal_cluster"), 
+                 value.name = "internal_respondent") %>% 
+  select(-variable) %>% 
+  na.omit() %>% 
+  my_group_by(.) %>% 
+  add_count(internal_respondent) %>% 
+  unique() %>% 
+  tidyr::spread(., internal_respondent, n)
+#### Check if columns are exists 
+must_exist <- c("SM", "Monitor", "CIP", "Households", "Supervisor")
+tableone[must_exist[!(must_exist %in% colnames(tableone))]] = 0
+
+tableone <- tableone %>%
+  select(region, province_name, internal_district, district_name, internal_subdistrict,
+         internal_cluster, SM, Monitor, CIP, Households, Supervisor) %>% 
+  my_arrange_by(.) %>%
+  rename(HH = Households, SUP = Supervisor, Dcode = internal_district, 
+         District = district_name, 
+         Subdistrict = internal_subdistrict,
+         Cluster = internal_cluster,
+         Region = region, Province = province_name) %>% 
+  tidyr::replace_na(., list(SM = 0, Monitor = 0, CIP = 0,  HH = 0, SUP = 0))
+
+  # Adds column with counts of indicators suggesting problems 
+  tableone$Problems <- clusters_coreind$coreind_problems
+  tableone <- tableone %>% 
+    arrange(Region, Province, District, Subdistrict, Cluster, desc(Problems))
+```
+
+```{r table_1_clusters, message=FALSE, warning=FALSE, fig.width=8}
+tableone <- tableone %>% ungroup() %>%
+  # select(region:Problems) %>%
+  # Just shorten Daman Takhtapol Shaga name
+  mutate(District = ifelse(District == "Daman Takhtapol Shaga", "Daman", District)) %>%
+  rename(`Core Prob`= Problems) %>%
+  select(Province, District, Subdistrict,
+         Cluster, SM, Monitor, CIP, HH, SUP, `Core Prob`)
+
+  print_table(tableone, cols_align_center = c("Cluster", "SM", "Monitor", "CIP", "HH", 
+                                              "SUP", "Core Prob"), zero_decimal=TRUE,
+              cols_width = c(.9, .9, .8, 0.5, 0.4, .5, 0.5, 0.5, 0.5, 0.5))
+# Prints table with clusters
+# knitr::kable(tableone,
+#              # Sets column names for table
+#              col.names = c("Region", "Province", "District", "Cluster", "SM",
+#                            "Monitor", "CIP", "HH", "SUP", "Core Prob"),
+#              align = c("l", "l", "l", "c", "c", "c", "c", "c", "c", "c")
+#              ) %>%
+#   kableExtra::kable_styling(latex_options = c("striped", "scale_down", "repeat_header"))
+```
+
+
+<br>
+
+
+```{r province_summary, message=FALSE, warning=FALSE}
+# Computes summary by province and district
+provinces <- clusters %>% select(-region) %>% 
+            group_by(province_name, internal_district, district_name) %>% 
+            dplyr::summarise(clusters =dplyr::n(), 
+                      coreind_problems = sum(coreind_problems)) 
+
+rows <- nrow(provinces)
+
+provinces <-  provinces %>%
+  mutate_(problem_clusters = rep(0, rows),
+         problems_percent = rep(0, rows)
+                               )
+            
+
+```
+
+
+**Table 2: `r paste("Number of clusters and problems by district (from", start_date %>% format("%d %B %Y"), "to", end_date %>% format("%d %B %Y"))`)**
+
+
+```{r table_2_districts, message=FALSE, warning=FALSE, fig.width=8}
+# Creates auxiliary dataframe 
+df <- clusters %>% 
+  ## Creates binary variable indicating clusters with problems
+  mutate(problem_clusters = ifelse(coreind_problems > 0, TRUE, FALSE)) %>% 
+  ## Groups variable by selected variables
+  group_by(region, province_name, internal_district, district_name)  %>%
+  ## Summarises data 
+  dplyr::summarise(
+    ### Counts clusters
+    clusters =dplyr::n(), 
+    ### Sums number of indicators with problems by district
+    coreind_problems = sum(coreind_problems),
+    ### Computes number of clusters with problems by district 
+    problem_clusters = sum(problem_clusters)) 
+
+# Creates function to bind totals
+bindsum <- function(df) if (is.numeric(df)) sum(df) else ''
+row_sum <- as.data.frame(lapply(df, bindsum)) 
+
+df <- df %>% 
+  ## Arranges order of rows by selected variables
+  arrange(region, province_name, internal_district)
+
+# Adds row sums to intermediary dataframe
+df <- rbind(
+  cbind(' '=' ', as.data.frame(df)), 
+  cbind(' '='Total', as.data.frame(row_sum))
+  ) %>% 
+  ## Computes % of clusters with problems by district
+  mutate(problems_percent = paste(round((problem_clusters / clusters) * 100), "%"))
+
+df <- df %>%
+  ungroup() %>%
+  select(-internal_district, -region) %>%
+  rename(#Region = region, 
+         Province = province_name, 
+         District = district_name, 
+         `No. Reported Clusters` = clusters, 
+         `Sum. Indicators with Problems` = coreind_problems,
+         `No. Clusters with Problems` = problem_clusters, 
+         `Per. Clusters with Problems` = problems_percent)
+
+print_table(df, zero_decimal = TRUE, 
+            cols_align_center = c("No. Reported Clusters", "Sum. Indicators with Problems", 
+                                  "No. Clusters with Problems", "Per. Clusters with Problems"),
+            cols_width = c(.5, .9, .9, .9, 1, 1, 1))
+
+# Prints table with clusters
+# knitr::kable(df,
+#      # Sets column names for table
+#       col.names = c("", "Region", "Province", "District", 
+#                     "# of reporting clusters", 
+#                     "Sum of indicators with problems",
+#                     "# of clusters with problems",
+#                     "% of clusters with problems"),
+#      # Sets alignment of text
+#            align = c("l", "l", "l", "l", "c", "c", "c", "c", "c")
+#      ) %>%
+#   kableExtra::kable_styling(latex_options = c("striped", "scale_down", "repeat_header"))
+      
+```
+
+
+
+The monitoring dataset includes information concerning `r length(clusters_coreind %>% select(starts_with("prob_ind")))` core key performance indicators (KPIs) related to the following areas:
+
+- Presence in the field
+
+- Profile
+
+- Preparedness
+
+- Documentation
+
+- Mobilisation
+
+- Community work
+
+- Results
+
+- Challenges
+
+- Operations
+
+
+For each core indicator, objectively verifiable standards (threshold values) have been defined in a [table with metadata about composite indexes, indicator definitions, qualifiers for blue status and related database variables](https://wferreira.teamwork.com/#files/5449521). These predefined standards (see Annex 1 with full list of KPIs) have been coded in RMarkdown syntax for automated processing, full transparency and reproducibility.
+
+The plot below shows the estimation of the mean value (average) concerning the number of indicators suggesting problems by cluster. This can be a proxy of the overall programme performance. The estimation took place with a [Bayesian bootstrap method](http://www.sumsar.net/blog/2016/02/bayesboot-an-r-package/) considering 4,000 sampling repetitions of the data subset from `r paste( start_date %>% format("%d %B %Y"), "to", end_date %>% format("%d %B %Y"))` (reporting reference dates[^2]). The plot includes the estimation of the HDI (Bayesian highest density interval) indicating the confidence interval at 95% confidence level. 
+
+[^2]: Reference dates can be changed in the report source code, if necessary.
+
+<br>
+
+
+```{r bootplot_problems_province, message=FALSE, fig.width = 8, fig.height=3.5}
+if(provinces$coreind_problems%>% length() > 1) {
+  topbootplot(provinces$coreind_problems, col = "lightblue", title = "Average number of indicators with problems by district", seed = 0)
+}
+```
+
+
+```{r bootplot_problems_clusters, message=FALSE, fig.width = 8, fig.height=3.5}
+
+topbootplot(clusters$coreind_problems, col = "lightgreen", title = "Average number of indicators with problems by cluster")
+```
+
+```{r df_problems, message=FALSE, warning=FALSE}
+# Creates subset of dataframe with indicators showing problems
+problems <- clusters_coreind %>% 
+  select(starts_with("prob_ind")) %>%
+  # Converts to numeric to ease subsetting
+  mutate_all(as.numeric) %>% 
+  # Selects all indicators with at least one cluster with problems
+  select(which(colSums(., na.rm=TRUE) > 0)) %>% 
+  # Binds and reorders columns to ease identification and plotting
+  cbind(clusters_coreind %>% 
+          select(region, province_name, district_name, internal_district,
+                 internal_subdistrict, internal_cluster)) %>% 
+  select(region:internal_cluster, everything())  %>% 
+  # Changing back to logical
+  mutate_if(function(col) is.numeric(col), as.logical) 
+
+# Name of indicators with problems
+prob_indicators <- problems %>% select(starts_with("prob_ind")) %>% names()
+
+```
+
+```{r plot_mult_respondents, fig.width = 8, fig.height=3.5, warning=FALSE, message=FALSE}
+# Creates vector with key variable name 
+library(reshape2)
+varname = "internal_respondent"
+
+# Creates long auxiliary dataframe with variable of interest (select_multiple)
+df <- kpi_df %>% 
+  select(interviews, internal_cluster, internal_team_number,
+         internal_district, internal_date, contains(varname)) #%>% 
+  # reshape2::melt(., id.var = c("internal_cluster", "district_name"), 
+  #                variable.name = varname) %>% 
+  # tbl_df() 
+
+# Binds and melts auxiliary dataframe
+df <-  df %>% 
+   cbind(str_split_fixed(df$internal_respondent, " ", 5)) %>% 
+   as_tibble() %>% mutate_all(., as.character) %>% 
+   mutate_all(na_if, "") %>%
+   select(-contains(varname),-interviews) %>% 
+  melt(., id.var = c("internal_cluster", "internal_team_number", "internal_district", "internal_date")) %>% 
+  na.omit() %>%
+  # just to cross check the table first, so I have arranged it as below
+  arrange(., internal_date, internal_district, internal_cluster, internal_team_number)
+
+# Plots results with custom function
+topbarplot(gsub("_", " ", df$value) %>% table, 
+           title = "Respondent categories by number of filled forms", 
+           brewerpal = "Dark2", 
+           label = "Interviews")
+
+```
+
+#####
+
+
+# Results by core key performance indicator (KPIs) suggesting problems
+
+The following table presents the core KPIs suggesting problems as from the submitted data. The table includes the performance area, the core indicator definition and code. For simplicity, the report presents results only for the core KPIs and some of the following plots refer to the core indicators only by their code.
+
+<br>
+
+**Table 3: `r paste("Description of core indicators suggesting problems (from", start_date %>% format("%d %B %Y"), "to", end_date %>% format("%d %B %Y"))`)**
+
+```{r table_3_problems, warning=FALSE, message=FALSE, fig.width=9}
+# Prints table with list of indicators 
+tmp_metadata <- metadata %>% 
+  filter(`Code identification (RMarkdown)` %in% prob_indicators ) %>% 
+  select(contains("Indicator"), Shortname, -`Core indicator`)
+
+print_table(tmp_metadata, cols_width = c(1.27, 4, 1))
+rm(tmp_metadata)
+
+ #  knitr::kable(metadata %>% 
+ #  filter(`Code identification (RMarkdown)` %in% prob_indicators ) %>% 
+ #  select(contains("Indicator"), Shortname, -`Core indicator`), 
+ # # Sets column names for table
+ #             col.names = c("Perform. area", "Indicator", "Indicator code"),
+ #             align = c("l", "l", "c")
+ #             ) %>%
+ #  kableExtra::kable_styling(latex_options = c("striped", "scale_down", "repeat_header"))
+```
+
+<br>
+
+
+The following plots present heat maps of indicators aggregated at different geographic levels. Red cells indicate indicators with problems. White cells indicate missing data. This can happen when submissions for the chosen date range do not include interviews of the required respondents whose answers should inform the respective indicator.
+
+
+
+```{r func_subchunkify, warning=FALSE, message=FALSE}
+# this function is super important for dynamic charts generation 
+subchunkify <- function(g, fig_height=4, fig_width=9, print=FALSE) {
+  g_deparsed <- paste0(deparse(
+    function() {
+      if(print == TRUE) {
+        print(g)
+      } else {
+        g
+      }
+      
+    }
+  ), collapse = '')
+  
+  sub_chunk <- paste0("
+  `","``{r sub_chunk_", floor(runif(1) * 20000), ", fig.height=", fig_height, ", fig.width=", fig_width, ", echo=FALSE}",
+  "\n(", 
+    g_deparsed
+    , ")()",
+  "\n`","``
+  ")
+  
+  cat(knitr::knit(text = knitr::knit_expand(text = sub_chunk), quiet = TRUE))
+}
+
+```
+
+
+```{r prob_districts_dataset, warning=FALSE, message=FALSE}
+# Prepares auxiliary dataset
+districts_ind_long <- clusters_coreind %>% 
+  select(region, province_name, internal_district, district_name,   starts_with("prob_ind")) %>% 
+  melt(., id.vars = c("region", "province_name", "internal_district", "district_name")) %>% 
+  mutate(Status = ifelse(value == TRUE, "Problems", "Passed")) %>% 
+  arrange(region, province_name, internal_district) %>%
+  rename(Provinces = province_name, Districts = district_name, Variable = variable)  
+
+## Creates equivalence dataset for code identification and areas
+metadata_df <- metadata %>%
+  rename(Variable = `Code identification (RMarkdown)`,
+         Areas = `Composite indicator`, Code = Shortname) %>%
+  select(Variable, Type, Areas, Code)
+
+# Merges, arranges and creates variable indicatig problems per Areas and Districts  
+districts_ind_long <- merge(districts_ind_long, metadata_df) %>% 
+  arrange(Variable, Areas) %>% na.omit() %>% 
+  mutate(Areas = paste(Type, Areas, sep="-")) %>% 
+  group_by(region, Provinces, Districts, Areas) %>% 
+  dplyr::summarise(Situation = sum(value, na.rm=T)) %>% 
+  mutate(Status = ifelse(Situation > 0, "Problems", "Passed"),
+         # this will count number of big issue in a district
+         Situation = ifelse(Situation >0, 1, 0)) %>%
+  arrange(region, Provinces, Districts)
+
+
+```
+
+```{r height_district_heatmap, warning=FALSE, message=FALSE}
+
+# districts per provinces, height should based on it
+heatmap_height_dist <- kpi_df %>% 
+    select(region, province_name, district_name, internal_cluster) %>% 
+    group_by(region, province_name, district_name, internal_cluster) %>% 
+    dplyr::summarise(height=n()) %>% 
+    select(region, province_name, district_name) %>%
+    group_by(region, province_name, district_name) %>% 
+    dplyr::summarise(height=n()) %>%
+    select(region, province_name) %>%
+    group_by(region, province_name) %>% 
+    dplyr::summarise(height=n()*.8) %>% 
+    mutate(height = ifelse(height <= 4.5 & height > 3.5, 7,
+                           ifelse(height <= 3.5 & height > 3.3, 6.5, 
+                                  ifelse(height <= 3.0 & height > 2.2, 6, 
+                                         ifelse(height <= 2.0 & height > 1, 5.5, 
+                                                ifelse(height <= 1, 5, height))))
+                           )) %>%
+    ungroup() %>%
+    select(height) %>% 
+    unlist() %>%
+    as.vector()
+  
+```
+
+
+```{r heatmap_area_district, message = FALSE, warning = FALSE, results='asis'}
+# Creates a list of unique provinces in the dataset
+province_list <- unique(districts_ind_long$Provinces)
+
+for (i in seq_along(province_list)) { 
+  
+ plot <- vecheatmap(df = districts_ind_long, 
+                    y.axis = "Districts", 
+                    x.axis = "Areas",
+                    filterparam = province_list[i],
+                    filtervar = "Provinces")
+ subchunkify(plot, fig_height = heatmap_height_dist[i])
+
+}
+
+```
+
+
+
+```{r prob_cluster_dataset, warning=FALSE, message=FALSE}
+## Prepares auxiliary dataset
+problems_long <- problems %>% 
+  mutate(cluster = paste(district_name, internal_cluster, sep ="-")) %>% 
+  select(region, province_name, district_name, internal_district, 
+         internal_subdistrict, internal_cluster,
+         cluster, starts_with("prob_ind")) %>% 
+  melt(., id.vars = c("region", "province_name", 
+                      "internal_district", "district_name",
+                      "internal_subdistrict",
+                      "cluster", "internal_cluster")) 
+# check if value is generated, otherwise generated one with passed
+value_exist <- c("value", "variable")
+problems_long[value_exist[!(value_exist %in% colnames(problems_long))]] = FALSE
+
+problems_long <- problems_long %>% 
+  mutate(Status = ifelse(value == TRUE, "Problems", "Passed")) %>% 
+  my_arrange_by(.) %>%
+  rename(Clusters = cluster, Variable = variable, 
+         Districts = district_name, Provinces = province_name) 
+
+
+## Creates equivalence dataset for code identification and areas
+metadata_df <- metadata %>% 
+  rename(Variable = `Code identification (RMarkdown)`, 
+         Areas = `Composite indicator`, Code = Shortname) %>%
+  select(Variable, Type, Areas, Code)    
+
+
+# Merges, arranges and creates variable indicatig problems per Areas and Districts  
+problems_long <- merge(problems_long, metadata_df) %>% 
+         mutate(Indicators = paste(Areas, Code, sep="-"),
+                Areas = paste(Type, Areas, sep = "-")) %>% 
+  arrange(Indicators, Areas) %>% na.omit() %>% 
+  group_by(Districts, Provinces, region,
+           Areas, Indicators, Code, Clusters) %>% 
+  dplyr::summarise(Situation = sum(value, na.rm=T)) %>% 
+  mutate(Status = ifelse(Situation > 0, "Problems", "Passed")) %>% 
+  arrange(region, Provinces, Districts, Indicators)
+```
+
+
+```{r height_cluster_heatmap, warning=FALSE, message=FALSE}
+  # Sets dynamic plot height for cluster heatmaps
+  heatmap_height_clstr <- kpi_df %>% 
+    select(region, province_name, district_name, cluster) %>% 
+    group_by(region, province_name, district_name, cluster) %>% 
+    dplyr::summarise(height=n()) %>% 
+    select(region, province_name, district_name) %>%
+    group_by(region, province_name, district_name) %>% 
+    dplyr::summarise(height=n()*0.5) %>% 
+    mutate(height = ifelse(height <= 4.5 & height > 3.5, 6,
+                           ifelse(height <= 3.5 & height > 3.3, 5.5, 
+                                  ifelse(height <= 3.0 & height > 2.2, 5, 
+                                         ifelse(height <= 2.0 & height > 1, 4, 
+                                                ifelse(height <= 1, 3, height))))
+                           )) %>%
+    ungroup() %>%
+    select(height) %>% 
+    unlist() %>%
+    as.vector()
+  
+  #max() *.15
+```
+
+
+```{r heatmap_area_cluster, message = FALSE, warning = FALSE, results='asis'}
+
+problems_long_areas <- clusters_coreind %>% 
+  mutate(cluster = paste(district_name, internal_cluster, sep ="-")) %>% 
+  select(region, province_name, internal_district, district_name, 
+         cluster, starts_with("prob_ind")) %>% 
+  melt(., id.vars = c("region", "province_name", 
+                      "internal_district", "district_name", "cluster")) %>% 
+  mutate(Status = ifelse(value == TRUE, "Problems", "Passed")) %>% 
+  arrange(region, province_name, internal_district, cluster) %>%
+  rename(Provinces = province_name, Districts = district_name, 
+         Variable = variable, Clusters = cluster)  
+
+## Creates equivalence dataset for code identification and areas
+metadata_df <- metadata %>%
+  rename(Variable = `Code identification (RMarkdown)`,
+         Areas = `Composite indicator`, Code = Shortname) %>%
+  select(Variable, Type, Areas, Code)
+
+# Merges, arranges and creates variable indicatig problems per Areas and Districts  
+problems_long_areas <- merge(problems_long_areas, metadata_df) %>% 
+  arrange(Variable, Areas) %>% na.omit() %>% 
+  mutate(Areas = paste(Type, Areas, sep="-")) %>% 
+  group_by(region, Provinces, Districts, Clusters, Areas) %>% 
+  dplyr::summarise(Situation = sum(value, na.rm=T)) %>% 
+  mutate(Status = ifelse(Situation > 0, "Problems", "Passed"),
+         # this will count number of big issue in a district
+         Situation = ifelse(Situation >0, 1, 0)) %>%
+  arrange(region, Provinces, Districts, Clusters)
+
+districts_list <- unique(problems_long_areas$Districts)
+for (i in seq_along(districts_list)) { 
+  
+  plot <- vecheatmap(df = problems_long_areas,
+                    x.axis = "Areas",
+                    filterparam = districts_list[i], 
+                    filtervar = "Districts")
+ 
+  subchunkify(plot, fig_height = heatmap_height_clstr[i])
+
+}
+
+# just remove the extra vars
+rm(districts_list)
+
+```
+
+
+```{r heatmap_multi_clusters_coreind, message = FALSE, warning = FALSE, results='asis'}
+# Creates a list of unique districts in the dataset
+district_list <- unique(problems_long$Districts)
+
+for (i in seq_along(district_list)) { 
+  
+ plot <- vecheatmap(filterparam = district_list[i], df = problems_long,
+                    filtervar = "Districts")
+ 
+ subchunkify(plot, fig_height = heatmap_height_clstr[i])
+
+}
+
+# remove the extra var
+rm(district_list)
+
+```
+
+
+```{r get_map, message=FALSE, warning=FALSE, cache = TRUE, eval=printmap, results='asis'}
+# create a data set with gps information. 
+gps_df <- kpi_df %>%
+  filter(!is.na(lon))
+# get regions out of the gps_df to create regional map
+# this can be further improved to create provincial map
+# for the timebing regional map would be fine 
+
+gps_regions <- unique(gps_df$region)
+ 
+library(ggmap)
+for (i in seq_along(gps_regions)) { 
+  # just filter region data by region 
+  filter_reg_data <- gps_df %>% filter(region == gps_regions[i])
+  # create and download the box for the map. 
+  lon <-  mean(filter_reg_data$lon, na.rm=TRUE)
+  lat <-  mean(filter_reg_data$lat, na.rm=TRUE)
+  boxfactor <- 1.1
+  lat <- c(lat - boxfactor, 
+            lat + boxfactor)
+  long <- c(lon - boxfactor - 0.25, 
+            lon + boxfactor + 0.25)
+  bbox <- make_bbox(long, lat, f=0.05)
+   
+  ## Downloading base map
+  # maptype: toner, toner-lite, terrain
+  map <- get_map(bbox, maptype="toner-lite", source="stamen")
+  
+  # call the function to create map
+  genratedmap <- print_map(map, filter_reg_data, gps_regions[i])
+  
+  # print maps
+  subchunkify(genratedmap, fig_width = 9, fig_height = 7)
+
+}
+
+```
+
+
+# Complementary plots
+
+
+This section presents complementary plots underlying the summarised results presented above. 
+
+
+## Monitors
+
+This section presents the results for the selected data range coming from the digital reporting form. Monitor reporting forms attempted to collect data resulting from field monitoring visits, particularly from observation of tasks performed by social mobilizers.
+
+```{r condplot_phase, fig.width = 8, fig.height=3.5, warning=FALSE}
+# Uses if else statement to allow for plotting when only one level of the variable is available in the dataset
+if (length(table(kpi_df$internal_phase)) == 1) {
+fastplot(kpi_df, varname = "internal_phase", title = "Monitoring phase when data collection took place")
+}else{
+topbarplot(gsub("_", " ", kpi_df$internal_phase) %>% table, title = "Monitor submissions by phase", brewerpal = "Set2", label = "Submissions (one submission can include more than one interview)")
+}
+```
+
+<br>
+
+**Table 4: `r paste("Monitor submissions by village (from", start_date %>% format("%d %B %Y"), "to", end_date %>% format("%d %B %Y"))`)**
+
+```{r table_4_subm_village, fig.width=9}
+library(dplyr)
+library(stringr)
+
+tmp_table_village <- kpi_df %>%
+  select(region, province_name, district_name, internal_district,
+         internal_subdistrict,
+         internal_cluster, internal_village,
+         internal_team_number, interviews) %>% 
+  #mutate(internal_team_number = paste("Team",internal_team_number)) %>%
+  my_arrange_by(.)
+
+tmp_table_village <- tmp_table_village %>% 
+    select(province_name, district_name,
+           internal_subdistrict,
+           internal_cluster, internal_village,
+           internal_team_number, interviews) %>% 
+    mutate(internal_village = str_replace_all(internal_village, "\\.", " "), 
+           internal_village = str_squish(internal_village)) %>%
+    rename(Province = province_name, District = district_name, 
+           Subdistrict = internal_subdistrict,
+           Cluster = internal_cluster, Village = internal_village, 
+           `Team No.` = internal_team_number, `No. Interviews` = interviews)
+
+# Prints table
+print_table(tmp_table_village, cols_align_center = c("Cluster", "Team No.", "No. Interviews"), cols_width = c(.9, .9, .9, .8, .9, .9, .9))
+# knitr::kable(
+#   tmp_table_village %>% 
+#     select(province_name, district_name, 
+#          internal_cluster, internal_village,
+#          internal_team_number, interviews) %>% 
+#     mutate(internal_village = str_replace_all(internal_village, "\\.", " "), 
+#            internal_village = str_squish(internal_village)),
+#  # Sets column names for table
+#              col.names = c("Province", "District", "Cluster", "Village", "Team No.", "No. Interviews"),
+#              align = c("l", "l", "c", "c", "c", "c")
+#              ) %>%
+#   kableExtra::kable_styling(latex_options = c("striped", "scale_down", "repeat_header"))
+
+```
+
+
+<br>
+
+
+**Table 5: `r paste("Interviews by monitor (from", start_date %>% format("%d %B %Y"), "to", end_date %>% format("%d %B %Y"))`)**
+
+```{r table_5_interviews, fig.width=9}
+# Prints table
+interviews_month <- kpi_df %>% 
+  select(internal_date, region, province_name, district_name, 
+         internal_monitorsex, internal_district, internal_cluster, internal_team_number,
+         internal_monitorname, interviews) %>%
+  group_by(internal_district, internal_cluster, internal_team_number, internal_monitorname) %>% 
+  mutate(month = internal_date  %>% format("%b %Y"),
+         cluster_team = paste(internal_cluster, "-", internal_team_number),
+         submission = ifelse(interviews >= 1, 1, 0)) %>% 
+  group_by(month, internal_district, province_name, region, district_name,
+           internal_monitorsex, internal_monitorname, cluster_team) %>% 
+  dplyr::summarise(interviews = sum(interviews, na.rm = TRUE),
+                   submission = sum(submission, na.rm = TRUE),
+                   villages = dplyr::n()) %>% 
+  # now as we know the number of number of interview per team,
+  # so we modify villages to 1 if there're more interviews to know the real number
+  # of village/team been monitored
+  mutate(villages = ifelse(villages > 1, 1, villages)) %>%
+  group_by(month, internal_district, province_name, region, district_name,
+           internal_monitorsex, internal_monitorname) %>% 
+  dplyr::summarise(interviews = sum(interviews, na.rm = TRUE),
+                   submission = sum(submission, na.rm = TRUE),
+                   teams_covered = dplyr::n()) %>%
+  arrange(region, province_name, district_name, month, internal_monitorname) %>% 
+  mutate(avg_interviews = round(interviews / teams_covered, digits = 1),
+         avg_interviews_sub = round(interviews/submission, digits = 1), 
+         rate_work = ifelse(avg_interviews_sub > 4, "VGood", 
+                            ifelse(avg_interviews_sub <= 4 & avg_interviews_sub > 3, "Good", 
+                                   ifelse(avg_interviews_sub <= 3 & avg_interviews_sub > 2, "Okay", 
+                                          ifelse(avg_interviews_sub <= 2 & avg_interviews_sub > 1, "Poor", 
+                                                 "Bad")
+                                          )
+                                   )
+                            )
+         )
+
+  # Sets column names for table
+interviews_month <- interviews_month %>% ungroup() %>% 
+  select(province_name, district_name, internal_monitorsex, 
+         internal_monitorname, submission, interviews, 
+         teams_covered, avg_interviews, avg_interviews_sub, rate_work, month) %>%
+  rename(Province = province_name, District = district_name, 
+         Sex = internal_monitorsex, Name=internal_monitorname, 
+         `No. Forms Sub.`=submission, `No. Interv. Conducted` = interviews, 
+         `No. Teams Visited` = teams_covered, `Avg. Interv./Team` = avg_interviews, 
+         `Avg. Interv./Form` = avg_interviews_sub, Perform = rate_work, 
+         Month = month)
+
+print_table(interviews_month, cols_align_center = c("No. Forms Sub.", "No. Interv. Conducted",
+                                                    "No. Teams Visited", "Avg. Interv./Team", 
+                                                    "Avg. Interv./Form"), 
+            zero_decimal = FALSE, 
+            cols_width = c(.7, .7, .5, .7, .5, .5, .6, .6, .5, .5, .6))
+
+# Below commented code is just to expremint with string matching for cleaning the names
+# however, in the future we can use IMEI number for cleaning their names
+
+# RecordLinkage::levenshteinSim(tolower(unique(interviews_month$internal_monitorname)),
+#                               as.vector(tolower(c("kandahar city-bi bi alia", "kandahar city-BiBi Alia"))))
+# monitors <- tolower(unique(interviews_month$internal_monitorname))
+# agr <- sapply(monitors, function(x) agrep(x, monitors, value = TRUE))
+
+# knitr::kable(interviews_month %>%
+#         select(district_name, internal_monitorsex,
+#                internal_monitorname, submission, interviews, teams_covered,
+#                avg_interviews, avg_interviews_sub, rate_work, month), 
+#       col.names = c("District", "Sex", "Name", 
+#                     "No. Subm.", "No. Intrv.", "No. Teams Cov.",
+#                     "Avg. Intrv./Team", "Avg. Intrv./Subm.", "Perform", "Month"),
+#       align = c("l", "l", "l", "c", "c", "c", "c", "c", "c", "c")
+#       ) %>%
+#   kableExtra::kable_styling(latex_options = c("striped", "scale_down", "repeat_header"))
+
+
+```
+
+
+
+<br>
+
+```{r bootplot_traveldistance, message=FALSE, fig.width = 8, fig.height=3.5}
+topbootplot(kpi_df %>% 
+              select(internal_distance) %>% 
+              # Filtering out data entry-mistakes / test data
+              filter(as.numeric(internal_distance) < 1000) %>% 
+              unlist() %>% as.numeric(), 
+            col = "gold2", title = "Travel distance (KM) by monitors for monitoring visits")
+```
+
+<br>
+
+
+**Table 6: `r paste("Total travelled distance in kilometers by month and district (from", start_date %>% format("%d %B %Y"), "to", end_date %>% format("%d %B %Y"))`)**
+
+```{r table_6_distance, fig.width=9}
+# Prints table with list of indicators 
+library(lubridate)
+travel_dist <- kpi_df %>% 
+  select(internal_date, region, province_name, district_name, internal_district, 
+         internal_monitorname, contains("distance")) %>%
+  filter(as.numeric(internal_distance) < 1000) %>% 
+  mutate(month = floor_date(internal_date, "month"),
+         internal_distance = as.numeric(internal_distance)) %>%
+  group_by(region, province_name, district_name,
+    internal_district, internal_monitorname, month, internal_date) %>%
+  dplyr::summarise(days = dplyr::n(), distance=sum(internal_distance, na.rm=T)) %>%
+  mutate(days = ifelse(days > 1, 1, days)) %>%
+  # now we have to make another group by/summarize to count correct no. of days.
+  group_by(region, province_name, district_name,
+    internal_district, internal_monitorname, month) %>%
+  dplyr::summarise(days = dplyr::n(), distance=sum(distance, na.rm=T)) %>%
+  mutate(kmday = round(distance / days, 1)) %>% 
+  mutate(date = month %>% 
+           format("%b %Y")) %>% 
+  arrange(region, province_name, district_name, month, internal_monitorname) %>% 
+  ungroup() %>%
+  select(#region, 
+         province_name, district_name, internal_monitorname, 
+         days, distance, kmday, date) %>%
+  rename(#Region = region, 
+         Province = province_name, District = district_name, 
+         Name = internal_monitorname, `No. Days Worked` = days, 
+         `KM Traveled` = distance, `KM/Day`= kmday, Month = date)
+  
+
+print_table(travel_dist, cols_align_center = c("No. Days Worked", "KM Traveled", 
+                                               "KM/Day"),
+            zero_decimal = FALSE, 
+            cols_width = c(.9, .9, .9, .9, .9, .8, .9))
+
+  # Sets column names for table
+# knitr::kable(travel_dist %>% select(district_name, internal_monitorname,
+#                              days, distance, kmday, date), 
+#       col.names = c("District" , "Monitor" , "Days Worked" ,
+#                     "KM Travelled" , "KM/Day", "Month"),
+#       align = c("l", "l", "c", "c", "c", "c")
+#      ) %>%
+#   kableExtra::kable_styling(latex_options = c("striped", "scale_down", "repeat_header"))
+
+
+# this code was to test if the original code counting no. of days correctly, but wasn't
+# uniquedata_akbari <- travel_dist %>% filter(internal_monitorname == "Aminullah Akbari")
+# unique(uniquedata_akbari$internal_date)
+```
+
+```{r func_problems_table, warning=FALSE, message=FALSE}
+
+problems_table <- function(df, variable, problems) {
+
+  tmp_prob <- df %>%
+  select(variable,
+             region,
+             province_name,
+             district_name,
+             internal_subdistrict, 
+             internal_cluster,
+             internal_team_number)  %>%
+      # Filters those with problems
+      filter(UQ(as.name(variable)) %in% problems) %>% 
+
+      group_by(region, province_name, district_name, internal_subdistrict, 
+               internal_cluster, internal_team_number) %>%
+      dplyr::summarise(freq = n()) %>%
+      ungroup() %>%
+      rename(Region = region, 
+             Province = province_name, 
+             District = district_name,
+             Subdistrict = internal_subdistrict, 
+             Cluster = internal_cluster,
+             Team = internal_team_number,
+             `Freq. Reported` = freq) %>%
+      select(Region, Province, District, Subdistrict, Cluster, Team, `Freq. Reported`)
+  
+  return(tmp_prob)
+  
+}
+
+# remove tmp
+rm(tmp_prob)
+
+```
+
+
+<br>
+
+
+```{r topbartreeplot_fieldbookaccess, results='asis'}
+# kpi_df 9 Monitoring visit have accessed SM field books.
+    # Defines parameters
+variable <- "monitor_fieldbookaccess"
+problems <- c("No")
+
+if(kpi_df$monitor_fieldbookaccess%>%table()%>%length() > 0) {
+    df <- kpi_df
+    eval.title <- "Monitors access to SM field books during monitoring visits (Monitor reports)"
+    #tree.title <- "Cases that monitors did not have access to SM field books during the monitoring visit"
+    brewerpal <- "Blues"
+    
+    chart <- topbartreeplot(df = df,
+                   variable = variable, 
+                   brewerpal = brewerpal, 
+                   problems = problems,
+                   title = eval.title,
+                   tree_title = tree.title,
+                   titlebreak = 90,
+                   tree_titlebreak = 60,
+                   single_hjust = -13
+            )
+    # print the chart returned from the above function
+    subchunkify(chart, fig_height = 2.5)
+}
+    
+    # now let's find if there are any problems
+    
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), " cases that monitors did not have access to SM field books during the monitoring visit**"))
+    }
+
+```
+
+```{r topbartreeplot_fieldbookaccess_tbl}
+if(nrow(probs_table) > 0) {
+
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+
+<br>
+
+```{r evalplot_fieldbookqual, warning=FALSE, message=FALSE, results='asis'}
+# KPI 10 quality of the registration / documentation by SM in their field books as reported by monitors.
+df = kpi_df
+    variable = "monitor_fieldbookqual"
+    problems = c("Poor", "Very_poor", "Not_applicable")
+    eval.title = "Quality of the registration / documentation by SM in their field books as reported by monitors"
+    # tree.title = "Cases that monitors reported 'not applicable', poor or very poor quality of the registration / documentation by SM in their field books"
+    
+    # Prints eval plot
+    chart <- evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants",
+                varlevel = "vgood_vpoor",
+                title_break = 80)
+    subchunkify(chart, fig_height = 3.2, fig_width = 8)
+    
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), " cases that monitors reported 'not applicable', poor or very poor quality of the registration / documentation by SM in their field books**"))
+    
+    }
+    
+```
+
+```{r evalplot_fieldbookqual_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+
+<br>
+
+```{r topbarplot_hh_tasks, fig.width = 8, fig.height=3}
+# Creates vector with key variable name 
+varname = "monitor_hh_tasks"
+
+# Creates long auxiliary dataframe with variable of interest (select_multiple)
+df <- kpi_df %>% 
+  select(internal_cluster, 
+         district_name, internal_phase,
+         contains(varname)) %>% 
+  reshape2::melt(., id.var = c("internal_cluster",
+                            "district_name",
+                            "internal_phase"),
+                 variable.name = varname) %>% 
+  tbl_df() 
+
+# Binds and melts auxiliary dataframe
+df <-  df %>% 
+  cbind(str_split_fixed(df$value, " ", 7)) %>% 
+  as_tibble() %>% 
+  mutate_all(., as.character) %>% 
+  mutate_all(na_if, "") %>%
+  select(-contains(varname), -value) %>% 
+  melt(., id.var = c("internal_cluster", 
+                     "district_name",
+                     "internal_phase")
+       ) %>% 
+  # Omit NAs
+  na.omit()
+
+# Lists phases in the dataset 
+phase_list <- unique(kpi_df$internal_phase)
+
+for (i in seq_along(phase_list)) {
+  # Filters data
+  data <- df %>% 
+    filter(internal_phase == phase_list[i])
+  
+  if (nrow(data) > 1) {
+  
+  # Plots results with custom function
+  plot <- 
+topbarplot(gsub("_", " ", data$value) %>% table, 
+           title = paste0("Tasks that social mobiliser performed during monitors' observation visits (",
+                         gsub("_", " ", phase_list[i]), ")"),
+           brewerpal = "Set3", #"Paired", 
+           label = "Respondents")
+ 
+ print(plot)
+ 
+   }
+  }
+```
+
+
+<br>
+
+```{r evalbarplot_monitor_manners, fig.width = 8, fig.height=3, results='asis'}
+    # KPI 17c
+    variable = "monitor_manners"
+    problems = c("Disagree", "Strongly_disagree")
+    eval.title =  "The social mobiliser is polite to community members and has good manners (Monitor reports)" 
+    
+df = kpi_df
+tree.title = paste0("Cases of disagreement with the statement: '", eval.title, "'")
+
+# Prints eval plot
+evalbarplot(df, 
+            variable, 
+            eval.title, 
+            "Participants")
+
+# Print table
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), " cases of disagreement with the statement: 'The social mobiliser is polite to community members and has good manners (Monitor reports)'**"))
+      
+    }
+
+```
+
+```{r evalbarplot_monitor_manners_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+
+<br>
+
+```{r evalbarplot_monitor_respected,fig.width = 8, fig.height=3, results='asis'}
+    # KPI 16c
+    variable = "monitor_respected"
+    problems = c("Disagree", "Strongly_disagree")
+    eval.title =   "The social mobiliser is respected by the community (Monitor interviews)" 
+    
+df = kpi_df
+tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+
+# Prints eval plot
+evalbarplot(df, 
+            variable, 
+            eval.title, 
+            "Participants", title_break = 80)
+
+# Prints toptreemap if there are problems
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), tree.title, "**"))
+      
+    }
+# toptreemap(df, 
+#            variable = variable, 
+#            title = paste0(tree.title,  " (Province-District-Cluster-Team number)"),  
+#            problems = problems,
+#            title_break = 80,
+#            brewerpal = "Reds")
+```
+```{r evalbarplot_monitor_respected_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+
+<br>
+
+```{r topbartreeplot_monitor_issues, fig.width = 8, fig.height=3, results='asis'}
+# KPI 12 Reported issues with field book in the area as from SM responses
+
+ # Defines parameters
+variable = "monitor_issues"
+problems = c("OPV_not_updated_or_incomplete", 
+               "Incorrect_use_of_symbols", 
+               "Incomplete_camp_summ_sheet")
+if(kpi_df$monitor_issues%>%table()%>%length()>0) {
+  df = kpi_df
+  eval.title = "Reported issues with social mobilizers' field books (Monitor reports)"
+  brewerpal = "Dark2"
+  
+      chart <- multipercentplot(df = df,
+                       variable = variable, 
+                       brewerpal = brewerpal, 
+                       problems = problems,
+                       title = eval.title,
+                       titlebreak = 52
+      )
+      print(chart)
+}
+    
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                " cases of field book issues ['OPV not updated or incomplete', 'Incorrect use of symbols', 'Incomplete campaign summary sheet']", "**"))
+      
+    }    
+    
+
+```
+```{r topbartreeplot_monitor_issues_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+<br>
+
+```{r height_districtissues}
+# Prepares auxiliary dataframe
+df <- kpi_df %>% 
+  select(district_name, monitor_issues, cluster) %>% 
+  filter(monitor_issues != "No_major_issues") %>% 
+  mutate(monitor_issues = gsub("_", " ", monitor_issues)) %>% 
+  group_by(district_name, monitor_issues, cluster) %>% 
+  dplyr::summarise(value= n()) %>%
+  na.omit()
+
+```
+
+
+```{r multiplot_issues_district, fig.width = 8, fig.height=3.5, message = FALSE}
+
+multiplot(df = kpi_df, 
+                      varname = "monitor_issues", 
+                      brewerpal = "Dark2", 
+                      subtitle = "observations",
+                      title = "Number of issues reported by monitors", 
+                      titlebreak = 60,
+                      vjust = -14,
+                      hjust = .5,
+                      facetvar = "district_name"
+                      )
+```
+
+<br>
+
+```{r fastplot_monitor_tasks, fig.width = 8, fig.height=3}
+# Prints information on variable by phase
+multiplot(
+  df = kpi_df,
+  varname = "monitor_tasks", 
+  brewerpal = "Set2",
+  title = "Main task of the social mobiliser that monitors observed",
+  subtitle = "observations",
+  titlebreak = 60, 
+  phase = TRUE
+)
+
+```
+
+<br>
+
+```{r topbartreeplot_vaccine_records, fig.width = 8, fig.height = 3, results='asis'}
+# KPI 11 - Is the number of unvaccinated children from the most recent campaign recorded in the fieldbook or summary sheets?
+
+# Defines parameters
+variable = "monitor_vaccinerecords"
+problems = c("No")
+
+if(kpi_df$monitor_vaccinerecords%>%table()%>%length()>0) {
+    df = kpi_df
+  
+    eval.title = "Is the number of unvaccinated children from the most recent campaign recorded in the fieldbook or summary sheets? (Monitor reports)"
+    tree.title = "Cases that the number of unvaccinated children from the most recent campaign is not recorded in the fieldbook or summary sheets"
+    brewerpal = "Set1"
+    
+    topbartreeplot(df = df,
+                   variable = variable, 
+                   brewerpal = brewerpal,
+                   problems = problems,
+                   title = eval.title,
+                   tree_title = tree.title,
+                   titlebreak = 80,
+                   tree_titlebreak = 60,
+                   single_hjust = -10
+    )
+}
+    
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                " cases that the number of unvaccinated children from the most recent campaign is not recorded in the fieldbook or summary sheets", "**"))
+      
+    } 
+
+```
+```{r topbartreeplot_vaccine_records_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+<br>
+
+```{r evalplot_monitor_smconvince, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+ # KPI 21c
+    variable = "monitor_smconvince"
+    eval.title =    "Social mobilisers have put enough effort to resolve vaccination refusals (Monitor reports)" 
+    problems = c("Disagree", "Strongly_disagree")
+    df = kpi_df
+    tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants")
+    
+    # Prints toptreemap if there are problems
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), tree.title, "**"))
+    
+    } 
+    # toptreemap(df, 
+    #            variable = variable, 
+    #            title = paste0(tree.title,  " (Province-District-Cluster-Team number)"),  
+    #            problems = problems,
+    #            title_break = 80,
+    #            brewerpal = "Reds")
+
+```
+
+```{r evalplot_monitor_smconvince_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+ 
+
+```{r evalplot_monitor_cip_influence, fig.width= 7, fig.height= 3, message = FALSE, results='asis'}
+
+    # KPI 18
+    variable = "monitor_cip_influence"
+    eval.title =  "The Community Influential Person (CIP) indeed has the potential to influence the community in support of the programme (Monitor reports)" 
+    problems = c("Disagree", "Strongly_disagree")
+    df = kpi_df
+    tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants")
+    
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+      
+    } 
+    
+    # # Prints toptreemap if there are problems
+    # toptreemap(df, 
+    #            variable = variable, 
+    #            title = paste0(tree.title,  " (Province-District-Cluster-Team number)"),  
+    #            problems = problems,
+    #            title_break = 80,
+    #            brewerpal = "Reds")
+
+```
+```{r evalplot_monitor_cip_influence_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+```{r evalplot_monitor_campsupport_monitor, fig.width= 8, fig.height= 3, results='asis', message = FALSE}
+
+# Defines parameters
+variable = "monitor_campsupport_monitor"
+problems = c("Strongly_disagree","Disagree")
+eval.title =  "The social mobiliser(s) effectively supported vaccination teams during the campaign (Monitor reports)"
+tree.title = " cases that the social mobiliser(s) have not effectively supported vaccination teams during the campaign as from monitor reports"
+
+# Prints eval plot
+evalbarplot(df = kpi_df, 
+            variable, 
+            eval.title, 
+            "Participants")
+
+# Prints toptreemap if there are problems
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    
+    } 
+# toptreemap(df, 
+#            variable = variable, 
+#            title = paste0(tree.title,  " (Province-District-Cluster-Team number)"),  
+#            problems = problems,
+#            title_break = 80,
+#            brewerpal = "Reds")
+
+```
+
+```{r evalplot_monitor_campsupport_monitor_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+<br>
+
+```{r evalplot_monitor_known, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+
+# Defines parameters
+variable = "monitor_known"
+problems = c("Strongly_disagree","Disagree")
+eval.title =  "The social mobiliser is known by the community (Monitor reports)"
+tree.title = " cases that the social mobiliser is not known by the community as from monitor reports"
+
+
+
+# Prints eval plot
+evalbarplot(df = kpi_df, 
+            variable, 
+            eval.title, 
+            "Participants")
+
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    
+    } 
+
+# Prints toptreemap if there are problems
+# toptreemap(df, 
+#            variable = variable, 
+#            title = paste0(tree.title,  " (Province-District-Cluster-Team number)"),  
+#            problems = problems,
+#            title_break = 80,
+#            brewerpal = "Reds")
+
+
+```
+
+```{r evalplot_monitor_known_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+## Social Mobilizers
+
+This sections presents the results concerning interviews of social mobilizers. The form was designed so that monitors could simply read out the questions and answer options verbatim. This aimed at minimising interviewer bias with minimal training requirements.
+
+```{r topbartreeplot_sm_resident, fig.width = 8, fig.height = 3, results='asis'}
+# Indicator 4 - SM is resident of the village / Nahia.   
+
+# Sets parameters
+    variable = "monitor_sm_resident"
+    problems = c("No")
+    tree.title = " cases that SM is not resident of the village / Nahia. "
+    
+if(kpi_df$monitor_sm_resident%>%table()%>%length()>0) {
+    df = kpi_df
+
+    eval.title = "Is the social mobilizer a resident of the village / nahia?"
+    
+    
+     topbartreeplot(df = df,
+                   variable = variable, 
+                   brewerpal = "Set1", 
+                   problems = problems,
+                   title = eval.title,
+                   tree_title = tree.title,
+                   titlebreak = 60,
+                   tree_titlebreak = 60,
+                   single_hjust = -10
+    )
+}
+     
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+  
+    }  
+    
+
+```
+```{r topbartreeplot_sm_resident_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+<br>
+
+```{r topbarplot_sm_age, fig.width = 8, fig.height=3, results='asis'}
+ # Defines parameters
+variable = "monitor_sm_age"
+    problems = c("17_or_less")
+    eval.title = "Age of social mobilizers (Monitor reports)"
+    tree.title = "Cases that SM ages are not between 18 and 50 years old"
+    
+if(kpi_df$monitor_sm_age%>%table()%>%length()>0) {
+    df = kpi_df
+    
+    brewerpal = "Set2"
+    
+    topbartreeplot(df = df,
+                   variable = variable, 
+                   brewerpal = brewerpal, 
+                   problems = problems,
+                   title = eval.title,
+                   tree_title = tree.title,
+                   titlebreak = 60,
+                   tree_titlebreak = 60,
+                   single_hjust = -10
+    )
+}
+    
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+      
+    } 
+```
+```{r topbarplot_sm_age_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+<br>
+
+```{r height_df_age}
+df_age <-  kpi_df %>% 
+  select(cluster, internal_district, district_name, monitor_sm_age) %>% 
+  na.omit() %>%  
+  mutate(monitor_sm_age = gsub("_", " ", monitor_sm_age)) %>%
+  group_by(cluster, internal_district, district_name, monitor_sm_age) %>%
+  dplyr::summarise(count = dplyr::n())
+
+district_list <- df_age$internal_district %>% unique()
+
+```
+
+
+```{r dfbarplot_age, warning=FALSE, message=FALSE, fig.width = 8, fig.height = 5}
+
+for (i in seq_along(district_list)) { 
+  df <- df_age %>% 
+    filter(internal_district == district_list[i])  
+ plot <- # Prints barplot with locations
+dfbarplot(df = df, 
+          varz = "cluster",
+          varx = "monitor_sm_age", 
+          vary = "count", 
+          title = paste0("Age of social mobilizers by district and cluster (", df$district_name, ") [District-Cluster number]"), 
+          ylab = "Observations", 
+          brewerpal = "Set3",
+          colour = "skyblue",
+          dist = 1.3,
+          angle = 0,
+          textsize = 2.7,
+          hjust = .5,
+          vjust = -0.7,
+          titlebreak = 70
+          ) 
+   
+ print(plot)
+
+  }
+
+```
+
+
+
+<br>
+
+```{r condplot_sm_sex, fig.width = 8, fig.height=2.5}
+# Defines parameters
+if(kpi_df$monitor_sm_sex%>%table()%>%length()>0) {
+  variable = "monitor_sm_sex"
+  title = "Sex of social mobilizers"
+  
+  # if (variable %>% table %>% length == 1)
+  # 
+  # # Checks if only one level is available
+  # if (kpi_df %>% select_(variable) %>% unlist() %>% table %>% length == 1) {
+  # 
+  # # Prints fastplot for cases with only one level  
+  # fastplot(varname = variable, title = title, hjust = -10)
+  # 
+  # }else{
+  
+  topbarplot(kpi_df %>% select_(variable) %>% unlist() %>% table, 
+             title = title, 
+             brewerpal = "Set2", 
+             label = "Respondents")
+}
+
+
+```
+
+<br>
+
+```{r plot_mult_sm_challenges, fig.width = 8, fig.height=3, results='asis'}
+    # KPI 23a
+      variable = "sm_challenges" 
+      eval.title =  "Challenges that the ICN team is facing in the area (SM interviews)" 
+      problems = c("Concerns", "Opposition", "Tough_refusals", 
+                   "Mobile populations", "CIP_not_supportive")
+      # Prints plot with custom function
+      multipercentplot( 
+        df = kpi_df, # Data frame
+        variable = variable, # Variable 
+        title = paste0("% of respondents - ", eval.title),
+        brewerpal = "Dark2",  # Colour palette for barplot
+        subtitle = "observations", # Subtitle clarification for barplot
+        titlebreak = 60, # Number of characters in barplot title
+        hjust = -0.1, # Horizontal justification of barplot annotation
+        tree_title = paste("Cases of problem:", eval.title), # Title of tree map
+        tree_titlebreak = 90, # Number of characters in tree map 
+        problems = problems # Parameters for problems
+      )
+      
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                paste0(" cases of problems: ", eval.title), "**"))
+      
+    } 
+
+```
+```{r plot_mult_sm_challenges_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+<br>
+
+
+```{r multipercentplot_sm_access, fig.width = 8, fig.height = 3, results='asis'}
+# Prints plot with custom function
+variable = "sm_access" # Variable 
+problems = c("Can_visit_few_houses", "Can_visit_very_few_houses")
+
+multipercentplot( 
+df = kpi_df, # Data frame
+  variable = variable, # Variable 
+  title = "% of social mobilizers by access to their assigned area",
+  brewerpal = "Set2",  # Colour palette for barplot
+  subtitle = "observations", # Subtitle clarification for barplot
+  titlebreak = 60, # Number of characters in barplot title
+  hjust = -0.1, # Horizontal justification of barplot annotation
+   # Title of tree map
+  #tree_titlebreak = 90, # Number of characters in tree map 
+ problems = problems # Parameters for problems
+)
+
+tree_title = " cases that social mobilizers can visit few or very few houses in their assigned area"
+
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree_title, "**"))
+     
+    } 
+
+```
+```{r multipercentplot_sm_access_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+<br>
+
+```{r topbartreeplot_sm_restricted_access, fig.width = 8, fig.height = 2.5, results='asis'}
+
+    variable = "sm_restricted_access"
+    eval_title =   "Reasons for access restrictions"
+    problems = c("Security_risk", "Not_accepted_by_community")
+    tree_title = " critical cases of access problems"
+    
+if(kpi_df$sm_restricted_access%>%table()%>%length()>0) {    
+    # KPI 26
+    df = kpi_df
+    
+   
+    
+    multipercentplot( 
+    df = df, # Data frame
+    variable = variable, # Variable 
+    title = eval_title,
+    brewerpal = "Reds",  # Colour palette for barplot
+    subtitle = "observations", # Subtitle clarification for barplot
+    titlebreak = 60, # Number of characters in barplot title
+    hjust = -0.1, # Horizontal justification of barplot annotation
+    #tree_title = "Cases that reasons for access restrictions are 'security risk' or 'SM not accepted by the community'", # Title of tree map
+    #tree_titlebreak = 90, # Number of characters in tree map 
+    problems = problems # Parameters for problems
+  )
+}
+  
+  probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree_title, "**"))
+    } 
+
+```
+```{r topbartreeplot_sm_restricted_access_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+<br>
+
+```{r multipercentplot_sm_inputs, fig.width = 8, fig.height=3.5, results='asis'}
+# KPI 7 SM reporting having received inputs (supplies and IEC materials)
+
+ # Defines parameters
+    df = kpi_df
+    variable = "sm_inputs"
+    problems = c("Other", "None_of_the_above", "Not_sure")
+    eval.title = "% of social mobilizers with key provided items by type (supplies and IEC materials)"
+    tree.title = " cases that SM reported to have not received inputs"
+    brewerpal = "Set3"
+    
+    multipercentplot(df = df,
+                     variable = variable, 
+                     brewerpal = brewerpal, 
+                     problems = problems,
+                     title = eval.title,
+                     tree_title = tree.title,
+                     titlebreak = 60,
+                     tree_titlebreak = 60
+    )
+    
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+
+    } 
+
+```
+```{r multipercentplot_sm_inputs_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+
+```{r df_inputs}
+# Creates intermediary dataframe with input count variable
+df_inputs <- kpi_df %>% 
+  select(sm_inputs, team_code, cluster, district_name, internal_cluster, 
+         region, province_name, internal_team_number, internal_district, internal_subdistrict) %>% 
+  na.omit() %>% 
+  mutate(input_count = sm_inputs %>%
+           na.omit() %>% 
+           strsplit(., "\\W+") %>% 
+           sapply(., length)
+         ) 
+
+```
+
+
+
+```{r topbarplot_num_inputcount, fig.width = 8, fig.height=3}
+if(df_inputs %>% nrow() >= 1){
+
+  topbarplot(df_inputs$input_count %>% table(), title = "Number of inputs (IEC and supplies) reported by SMs", label = "Social mobilizers", brewerpal = "Paired")
+  
+  }
+```
+
+
+```{r toptreemap_num_inputcount, warning = FALSE, results='asis'}
+if(df_inputs %>% nrow() >= 1) {
+
+# Plots tree map plot with locations of less than 3 inputs
+  df = df_inputs 
+  variable = "input_count" # Example of variable
+  problems_num = 4 # Criteria of problems (in days)
+  tree_title = " cases where number of reported inputs is three or less (SM interviews)" # 
+
+df_mosaic <- filter_table_by_num_less_than(df, variable, problems_num)
+
+  if(nrow(df_mosaic) > 0) {
+      cat(paste("**Table below shows ", nrow(df_mosaic), 
+                tree_title, "**"))
+  }
+        
+
+}
+
+```
+```{r toptreemap_num_inputcount_tbl }
+if(nrow(df_mosaic) > 0) {
+    
+      print_table(df_mosaic, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+  }
+```
+
+<br>
+
+```{r multipercentplot_sm_support, fig.width = 8, fig.height=3, results='asis'}
+# KPI 31
+    variable = "sm_support"
+    eval.title =   "Reports of on-the-job support in past two weeks from data collection by type of support (SM interviews)"
+    problems = c("Other", "Not_sure")
+      multipercentplot( 
+      df = kpi_df, # Data frame
+      variable = variable, # Variable 
+      title = paste0("% of respondents - ", eval.title),
+      brewerpal = "Set3",  # Colour palette for barplot
+      subtitle = "observations", # Subtitle clarification for barplot
+      titlebreak = 55, # Number of characters in barplot title
+      hjust = -0.1, # Horizontal justification of barplot annotation
+      #tree_title = paste("Cases of problem:", eval.title), # Title of tree map
+      #tree_titlebreak = 90, # Number of characters in tree map 
+      problems = problems # Parameters for problems
+    )
+      
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                paste0(paste(" cases of problem:", eval.title)), "**"))
+  
+    } 
+      
+      
+
+
+```
+```{r multipercentplot_sm_support_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+<br>
+
+
+```{r topbarplot_supporter_sm, fig.width = 8, fig.height=3, results='asis'}
+# KPI 30
+    
+    variable = "supporter_sm"
+      eval.title =  "SM reporting to have received guidance / coaching from CCS, DCO or PCO" 
+    problems = c("No_support", "Not_sure", "Other")
+    # Prints plot with custom function
+    multipercentplot( 
+      df = kpi_df, # Data frame
+      variable = variable, # Variable 
+      title = paste0("% of respondents - ", eval.title),
+      brewerpal = "Dark2",  # Colour palette for barplot
+      subtitle = "observations", # Subtitle clarification for barplot
+      titlebreak = 60, # Number of characters in barplot title
+      hjust = -0.1, # Horizontal justification of barplot annotation
+      # tree_title = paste("Cases of problem:", eval.title), # Title of tree map
+      # tree_titlebreak = 90, # Number of characters in tree map 
+      problems = problems # Parameters for problems
+    )
+    
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                " cases of problem:", eval.title, "**"))
+    }
+
+
+```
+```{r topbarplot_supporter_sm_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+<br>
+
+```{r evalbarplot_ccspresent_sm, fig.width = 8, fig.height=3, results='asis'}
+    # KPI 33b    
+      variable = "sm_ccspresent_sm"
+      eval.title =   "The Cluster Communication Supervisor (CCS) visits the area at least once a month to provide information on vaccination and support to the social mobiliser (SM interviews)"
+      problems = c("Disagree", "Strongly_disagree")
+      df = kpi_df
+      tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+      
+      # Prints eval plot
+      evalbarplot(df, 
+                  variable, 
+                  eval.title, 
+                  "Participants")
+      
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), tree.title, "**"))
+    }
+      
+      # Prints toptreemap if there are problems
+      # toptreemap(df, 
+      #            variable = variable, 
+      #            title = paste0(tree.title,  " (Province-District-Cluster-Team number)"),  
+      #            problems = problems,
+      #            title_break = 80,
+      #            brewerpal = "Reds")
+
+```
+```{r evalbarplot_ccspresent_sm_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+
+<br>
+
+```{r plot_mult_sm_trainings, fig.width = 8, fig.height=3, results='asis'}
+# KPI 6 -  SM reporting to have received both the basic training for social mobilisers (2 days) and the Pre-campaign training. 
+
+ # Defines parameters
+    df = kpi_df
+    variable = "sm_trainings"
+    problems = c("No_training")
+    eval.title = "Trainings received by social mobilisers (Monitor reports)"
+    tree.title = " cases that SM reported to have no training"
+    brewerpal = "Accent"
+    
+    multipercentplot(df = df,
+                   variable = variable, 
+                   brewerpal = brewerpal, 
+                   problems = problems,
+                   title = eval.title,
+                   # tree_title = tree.title,
+                   titlebreak = 60
+                   # tree_titlebreak = 60
+    )
+    
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+
+```
+```{r plot_mult_sm_trainings_tbl, warning=FALSE, message=FALSE}
+if(nrow(probs_table) > 0) {
+      
+      print_table(probs_table, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+<br>
+
+```{r topbarplot_sm_workplan, fig.width = 8, fig.height=2.5}
+# Creates vector with key variable name 
+varname = "sm_workplan"
+
+# Creates long auxiliary dataframe with variable of interest (select_multiple)
+df <- kpi_df %>% 
+  select(team_code, internal_cluster, internal_phase, 
+         district_name, internal_district, contains(varname)) %>% 
+  na.omit() %>%
+  reshape2::melt(., id.var = c("team_code",
+                               "internal_cluster",
+                               "internal_district",
+                               "district_name",
+                               "internal_phase"), 
+                 variable.name = varname) %>% 
+  tbl_df() 
+
+# Binds and melts auxiliary dataframe
+df <-  df %>% 
+  cbind(str_split_fixed(df$value, " ", 7)) %>% 
+  as_tibble() %>% 
+  mutate_all(., as.character) %>% 
+  mutate_all(na_if, "") %>%
+  select(-contains(varname),-value) %>% 
+  melt(., id.var = c("internal_cluster", 
+                     "internal_district",
+                     "district_name",
+                     "team_code",
+                     "internal_phase")
+       ) %>% 
+  na.omit() %>% 
+  mutate(value = gsub("_", " ", value),
+         internal_phase = gsub("_", " ", internal_phase)
+         )
+
+# Creates a list of unique provinces in the dataset
+phase_list <- unique(df$internal_phase)
+
+for (i in seq_along(phase_list)) { 
+
+# Checks if there is enough data available  
+  if (df$internal_phase %>% table %>% length > 1) {
+    
+    plot <- topbarplot(df  %>%  
+      filter(internal_phase == phase_list[i]) %>% 
+        select(value) %>% table,
+      title = paste0("What is your working plan for today? (SM interviews / ", phase_list[i], ")"),
+      brewerpal = "Dark2",
+      titlebreak = 50) 
+      
+      print(plot)
+  
+  }
+}
+
+```
+
+<br>
+
+```{r fastplot_sm_mode, fig.width = 8, fig.height=2}
+
+# Conditional plot to allow for visualisation of variable with one level
+mode_empl <- kpi_df %>% 
+    select(sm_mode) %>%
+    mutate(sm_mode = gsub("_", " ", sm_mode)) %>% 
+    table
+
+if (length(table(mode_empl)) > 0) {
+
+  
+topbarplot(mode_empl, 
+           title = "What is your mode of employment?", 
+           brewerpal = "Dark2", 
+           label = "Responses")
+  
+}
+
+rm(mode_empl)
+
+```
+
+<br>
+
+```{r condplot_sm_salary, fig.width = 8, fig.height=4}
+
+salaray_rec <- kpi_df %>% 
+    select(sm_salary) %>%
+    filter(sm_salary != "NA") %>%
+    mutate(sm_salary = paste(format(as.numeric(sm_salary), big.mark = ","), "AFN")) %>% 
+    table
+# Conditional plot to allow for visualisation of variable with one level
+if (length(salaray_rec) > 0) {
+
+  
+  topbarplot(salaray_rec,
+          title = "How much did you receive in your latest salary in Afghani? (SM interviews)", 
+           brewerpal = "Dark2", 
+           label = "Responses")
+  
+}
+
+```
+
+<br>
+
+```{r toptreemap_salary, warning=FALSE, results='asis'}
+# Plots tree map plot with locations of payment delays
+# toptreemap_num(df = kpi_df, 
+#                        variable = "sm_salary", # Example of variable
+#                        tree_title = "Cases where reported social mobilisers' salaries are under 7,500 AFN", # Example of title
+#                        brewerpal = "Reds", # Brewer palette see display.brewer.all()
+#                        problems_num = 7500, # Criteria of problems (in days)
+#                        tree_titlebreak = 80, # Title break in # of characters
+#                lessthan = TRUE # condition if less than should be used
+#                )
+variable = "sm_salary" # Example of variable
+tree_title = " cases where reported social mobilisers' salaries are under 7,500 AFN" # 
+problems_num = 7500
+
+df_mosaic <- filter_table_by_num_less_than(df = kpi_df, variable, problems_num)
+
+if(nrow(df_mosaic) > 0) {
+      cat(paste("**Table below shows ", nrow(df_mosaic), 
+                tree_title, "**"))
+}
+```
+```{r toptreemap_salary_tbl, warning=FALSE, message=FALSE}
+if(nrow(df_mosaic) > 0) {
+    
+      print_table(df_mosaic, 
+                cols_align_center = c("Cluster", "Team", "`Freq. Reported`"))
+}
+```
+
+
+<br>
+
+```{r condplot_sm_lastpay, fig.width = 8, fig.height=2.5}
+# Conditional plot to allow for visualisation of data with only one level
+
+if (length(table(kpi_df$sm_lastpay)) == 1) {
+  
+  
+topbarplot(gsub("_", " ", kpi_df$sm_lastpay) %>% table,
+           title = "Up to which month have you already been paid for? (SM interviews)", 
+           brewerpal = "Set2", label = "Responses")
+  
+}
+
+```
+
+<br>
+
+```{r condplot_sm_payment, fig.width = 8, fig.height=3}
+
+# Conditional plot to allow for visualisation of variable with one level
+if (length(table(kpi_df$sm_payment)) > 0) {
+  
+  
+topbarplot(
+  kpi_df %>% 
+    select(sm_payment) %>%
+    mutate(sm_payment = gsub("_", " ", sm_payment)) %>% 
+    table, 
+           title = "How did you receive your latest payment? (SM interviews)", 
+           brewerpal = "Dark2", 
+           label = "Responses")
+  
+}
+
+
+```
+
+<br>
+**Table below shows: `r paste("Summary statistics - Days between date of data collection and last payment to SM (from", start_date %>% format("%d %B %Y"), "to", end_date %>% format("%d %B %Y"))`)**
+
+```{r table_7_paydelay, message=FALSE, warning=FALSE}
+    # Creates auxiliary factor vector with months  
+    months <- factor(
+      c("January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"),
+      levels = c("January", "February", "March", "April", "May", "June",
+                 "July", "August", "September", "October", "November", "December"
+      )
+    )
+
+
+# Creates auxiliary dataframe with pay delays by team
+library(dplyr)
+library(lubridate)
+df_lastpay <- kpi_df %>% 
+      rename(collect_date = internal_date) %>% 
+      mutate(lastpay = 
+        # Pastes year of reporting to variable  
+        paste(
+          zoo::as.yearmon(ymd(collect_date)) %>% format("%Y"),
+          # Transforms month data using auxiliary vector
+          factor(sm_lastpay, levels = levels(months)) %>% 
+            ## Changes to numeric class
+            as.numeric() %>% 
+            ## Adds leading zero
+            ifelse(nchar(.)==1, paste0("0",.), .), 
+          sep = "-") %>% 
+          paste0("-01")
+        ) %>% 
+      # Selects variables
+      select(collect_date, lastpay, sm_lastpay, region, province_name, internal_district,
+             district_name, internal_subdistrict, internal_cluster, 
+             cluster, internal_team_number) %>% 
+      # Omits NA
+      na.omit() %>% # Creates variable with payment delay in days
+      mutate(paydelay = as.numeric(ymd(collect_date) - ymd(lastpay))) %>% 
+      mutate(team = paste(province_name, 
+                          cluster, internal_team_number,
+                          sep = "-")) %>% 
+      # Changes order of columns
+      select(paydelay, everything()) %>% 
+  # Filtering out advance payments / data-entry mistakes
+  filter(paydelay >= 0)
+
+# Creates a variable with the delay in months
+df_lastpay$paydelay_months <- as.vector( 12 * 
+    (as.POSIXlt(df_lastpay$collect_date)$year - as.POSIXlt(df_lastpay$lastpay)$year) + 
+    (as.POSIXlt(df_lastpay$collect_date)$mon - as.POSIXlt(df_lastpay$lastpay)$mon) 
+)
+
+# Prints table with summary statistics
+library(pander)
+summary(df_lastpay$paydelay) %>% 
+  pander()
+```
+<br>
+
+```{r bootplot_paydelay, message=FALSE, fig.width = 8, fig.height=3}
+topbootplot(
+  df_lastpay$paydelay, 
+  col = "lightgreen", 
+  title = "Avg. # of days between date of data collection and last payment to SM")
+```
+
+<br>
+
+```{r barplot_paydelay, fig.width = 8, fig.height=5}
+library(ggplot2)
+# Plots average number of payment delay by district
+df <- df_lastpay %>% select(paydelay, district_name) %>% group_by(district_name) %>% dplyr::summarise(avg_delay = round(mean(paydelay)), 1) %>% arrange(avg_delay) 
+
+## Prints plot
+ggplot(df, aes(x = reorder(district_name, -avg_delay), y = avg_delay)) +
+  geom_bar(stat="identity", aes(fill=factor(avg_delay))) + 
+  coord_flip() +
+  geom_text(aes(label=paste(avg_delay, "days")), 
+            hjust = 1.2,  vjust=.5, color="black", size=3) +
+  theme_minimal()  + 
+  scale_fill_brewer(palette="RdYlGn", direction=-1) + 
+      theme(legend.position="none")   + 
+      # Includes plot title 
+      ggtitle(stringr::str_wrap("Avg. days between date of data collection and last payment to SM (by district)", width = 42)
+      ) + 
+      # Removes title for y axis
+      theme(axis.title.y = element_blank()) +
+      # Changes size and format of axis and title
+      theme(axis.text=element_text(size = 9), 
+            axis.title=element_text(size = 9)) + 
+      theme(plot.title = element_text(size = 11, face = "bold")) +
+  labs(y = "Days") + scale_fill_hue()
+
+```
+
+<br>
+
+
+```{r toptreemap_paymentdelay, warning=FALSE, message=FALSE, results='asis'}
+# # Plots tree map plot with locations of payment delays
+# toptreemap_num(df = df_lastpay, 
+#                        variable = "paydelay", # Example of variable
+tree_title = " cases where social mobilisers' lastest payment was received over 60 days from date of data collection" # Example of title
+#                        brewerpal = "Reds", # Brewer palette see display.brewer.all()
+#                        problems_num = 60, # Criteria of problems (in days)
+#                        tree_titlebreak = 80, # Title break in # of characters
+#                lessthan = FALSE # condition if less than should be used
+#                )
+problems_num = 60
+
+tmp_lastpay <- df_lastpay %>% filter(paydelay >= problems_num) %>%
+  select(region, province_name, district_name, internal_subdistrict, 
+         internal_cluster, internal_team_number, sm_lastpay, paydelay) %>%
+  rename(Region = region, Province = province_name, District = district_name, 
+         Subdistrict = internal_subdistrict, Cluster = internal_cluster, 
+         Team = internal_team_number, `Last Payment` = sm_lastpay,  
+         `Delay in Days` = paydelay) %>%
+  arrange(Region, Province, District, Subdistrict, Cluster, Team, `Last Payment`)
+
+
+if(nrow(tmp_lastpay) > 0) {
+      cat(paste("**Table below shows ", nrow(tmp_lastpay), 
+                tree_title, "**"))
+}
+```
+```{r toptreemap_paymentdelay_tbl, warning=FALSE, message=FALSE}
+if(nrow(tmp_lastpay) > 0) {
+    
+      print_table(tmp_lastpay, cols_align_center = c("Cluster", "Team", "Delay in Days"),
+                  cols_width = c(.7, .9, .9, .9, .6, .6, .9, .7))
+}
+```
+
+
+<br>
+
+```{r condplot_sm_mainreasons, fig.width = 8, fig.height=3}
+
+# Conditional plot to allow for visualisation of variable with one level
+if (length(table(kpi_df$sm_mainreasons_sm)) > 0) {
+
+  
+  topbarplot(
+    gsub("_", " ", kpi_df$sm_mainreasons_sm) %>% 
+               table, 
+    title = "In your opinion, what is the main reason why some under-five children in your area not vaccinated?", 
+    brewerpal = "Dark2")
+  
+}
+
+```
+
+## CIPs (Community Influencer People)
+
+This section presents the results of interviews with CIPs (Community Influencer People). These are opinion makers who should help promoting vaccination campaigns in their communities.
+
+```{r plot_cip_affiliation, fig.width = 8, fig.height=4}
+if(kpi_df$cip_affiliation%>%table()%>%length()>0) {
+  if (kpi_df$cip_affiliation %>% table %>% length() <= 13) {
+  
+  topbarplot(gsub("_", " ", kpi_df$cip_affiliation) %>% table, 
+             title = "What is your main affiliation? (CIP interviews)",
+             brewerpal = "Set3")
+  }else{
+  
+    topbarplot(gsub("_", " ", kpi_df$cip_affiliation) %>% table, 
+             title = "What is your main affiliation? (CIP interviews)",
+             brewerpal = "Set3") + scale_fill_hue()  
+    
+  }
+}
+
+  
+```
+
+<br>
+
+```{r plot_cip_visitfreq, fig.width = 8, fig.height=3, results='asis'}
+# KPI 13 Frequency that social mobilisers conduct house by house visits as reported by CIPs
+
+    variable = "cip_visitfreq"
+    problems = c("Once_a_month", "Less_regularly_than_once_a_month",
+                 "Not_at_all", "Not_sure", "Not_applicable")
+    eval.title = "Freq. that SM conduct house by house visits as reported in CIP interviews"
+    tree.title = "Potential cases of insufficient house by house visits ['Once a month', 'Less regularly than once a month', 'Not at all', 'Not sure' or 'Not applicable']"
+    
+if(kpi_df$cip_visitfreq%>%table()%>%length()>0) {
+  # Defines parameters
+    df = kpi_df
+    
+    brewerpal = "Pastel2"
+    
+    topbartreeplot(df = df,
+                   variable = variable, 
+                   brewerpal = brewerpal, 
+                   problems = problems,
+                   title = eval.title,
+                   tree_title = tree.title,
+                   titlebreak = 60,
+                   tree_titlebreak = 80
+    )
+}
+    
+  
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                paste0(" potential cases of insufficient house by house visits ['Once a month', 'Less regularly than once a month', 'Not at all', 'Not sure' or 'Not applicable']"), "**"))
+      
+    }
+    
+
+```
+```{r plot_cip_visitfreq_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+
+<br>
+
+```{r plot_cip_mainreasons, fig.width = 8, fig.height=3}
+if(kpi_df$cip_mainreasons_cip%>%table()%>%length()>0) {
+  topbarplot(
+    gsub("_", " ", kpi_df$cip_mainreasons_cip) %>% table, 
+    title = "In your opinion, what is the main reason why some under-five children in your area not vaccinated? (CIP interviews)", 
+    brewerpal = "Accent")
+}
+
+```
+
+<br>
+
+```{r plot_cip_knowccs, fig.width = 8, fig.height=3, results='asis'}
+
+    variable = "cip_knowccs"
+    problems = c("No")
+    eval.title = "Do you know the Cluster Communication Supervisor (CCS) working for this area? (CIP interviews)"
+    tree.title = "Cases that CIPs report not knowing Cluster Communication Supervisor (CCS)"
+    
+if(kpi_df$cip_knowccs%>%table()%>%length()>0) {
+# Defines parameters
+    df = kpi_df
+    
+    brewerpal = "Set3"
+    
+    topbartreeplot(df = df,
+                   variable = variable, 
+                   brewerpal = brewerpal, 
+                   problems = problems,
+                   title = eval.title,
+                   tree_title = tree.title,
+                   titlebreak = 60,
+                   tree_titlebreak = 60
+    )
+}
+    
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                paste0(" cases that CIPs report not knowing Cluster Communication Supervisor (CCS)"), "**"))
+    }
+
+```
+```{r plot_cip_knowccs_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_cip_ccspresent_cip, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+
+    # KPI 33a
+    variable = "cip_ccspresent_cip"
+      eval.title =   "The Cluster Communication Supervisor (CCS) visits the area at least once a month to provide information on vaccination and support to the social mobiliser (CIP interviews)"
+    problems = c("Disagree", "Strongly_disagree")
+    df = kpi_df
+    tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants")
+    
+    # Prints toptreemap if there are problems
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+```
+```{r evalplot_cip_ccspresent_cip_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_cip_knownsm_cip, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+
+# Sets parameters
+df = kpi_df
+variable = "cip_knowsm_cip"
+eval.title = "Everyone knows the social mobiliser who is working in this area to support Polio vaccination  (CIP interviews)"
+tree.title = " cases where CIPs disagreed that everyone knows the social mobiliser who is working in this area to support Polio vaccination"
+problems = c("Disagree", "Strongly_disagree")
+
+# Prints eval plot
+evalbarplot(df, 
+            variable, 
+            eval.title, 
+            "Participants")
+
+# Prints toptreemap if there are problems
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+```
+```{r evalplot_cip_knownsm_cip_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_cip_knowccs, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+
+variable = "cip_knowccs"
+  problems = c("No")
+  eval.title = "Community Influencing People (CIPs) reports knowing Cluster Communication Supervisor (CCS)"
+  tree.title = "Cases that CIPs report not knowing Cluster Communication Supervisor (CCS)"
+
+if(kpi_df$cip_knowccs%>%table()%>%length()>0) {
+# Sets parameters
+  df = kpi_df
+  
+  topbartreeplot(df = df,
+                     variable = variable, 
+                     brewerpal = "Set2", 
+                     problems = problems,
+                     title = eval.title,
+                     tree_title = "ccases that the Community Influencing People (CIPs) reports not knowing CCS",
+                 titlebreak = 60
+      )
+}
+
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+    
+
+```
+```{r evalplot_cip_knowccs_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_cip_respected, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+# Sets parameters
+# KPI 16a
+variable = "cip_respected_cip"
+eval.title =  "The social mobiliser is respected by the community (CIP interviews)" 
+problems = c("Disagree", "Strongly_disagree")
+df = kpi_df
+tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+
+# Prints eval plot
+evalbarplot(df, 
+            variable, 
+            eval.title, 
+            "Participants")
+
+# Prints toptreemap if there are problems
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+
+```
+```{r evalplot_cip_respected_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_manners_cip, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+     # KPI 17a
+    variable = "cip_manners_cip"
+    eval.title =  "The social mobiliser is polite to community members and have good manners (CIP interviews)" 
+    problems = c("Disagree", "Strongly_disagree")
+df = kpi_df
+tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+
+# Prints eval plot
+evalbarplot(df, 
+            variable, 
+            eval.title, 
+            "Participants")
+
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+```
+```{r evalplot_manners_cip_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+
+<br>
+
+```{r evalplot_cip_smgoodjob, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+# KPI 14b
+
+df = kpi_df
+    variable = "cip_smgoodjob_cip"
+    problems = c("Disagree", "Strongly_disagree")
+    eval.title = "Opinions concerning the statement that 'social mobilisers do a good job in providing information on Polio vaccination' (CIP interviews)"
+    tree.title = " cases that CIPs disagreed that social mobilisers do a good job in providing information on Polio vaccination"
+    
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants")
+    
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+```
+```{r evalplot_cip_smgoodjob_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_cip_smconvince, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+
+    # KPI 21a
+    variable = "cip_smconvince_cip"
+    eval.title =  "Social mobilisers have put enough effort to resolve vaccination refusals (CIP interviews)" 
+    problems = c("Disagree", "Strongly_disagree")
+    df = kpi_df
+    tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants")
+    
+    # Prints toptreemap if there are problems if there are problems
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+
+```
+```{r evalplot_cip_smconvince_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+<br>
+
+```{r evalplot_cip_involvement, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+# Sets parameters
+    # KPI 19
+      variable = "cip_involvement"
+      eval.title =  "You feel that your are sufficiently involved and consulted in discussions related to Polio and health in this area (CIP interviews)" 
+      problems = c("Disagree", "Strongly_disagree")
+      df = kpi_df
+      tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+      
+      # Prints eval plot
+      evalbarplot(df, 
+                  variable, 
+                  eval.title, 
+                  "Participants")
+      
+      # Prints toptreemap if there are problems
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+```
+```{r evalplot_cip_involvement_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+<br>
+
+```{r evalplot_cip_vaccination_othercip, fig.width= 8, fig.height= 3, results='asis', message = FALSE}
+    # KPI 22
+      variable = "cip_vaccination_othercip"
+      eval.title =  "There are community influencers in this area who do not think that under-five children should be vaccinated every time (CIP interviews)" 
+      problems = c("Agree", "Strongly_agree")
+      df = kpi_df
+      tree.title = paste0(" cases of agreement with the statement: '", eval.title, "'")
+      
+      # Prints eval plot
+      evalbarplot(df, 
+                  variable, 
+                  eval.title, 
+                  "Participants")
+      
+      # Prints toptreemap if there are problems
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+
+```
+```{r evalplot_cip_vaccination_othercip_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+
+<br>
+
+```{r evalplot_cip_vaccination_cip, fig.width= 8, fig.height= 3, results='asis', message = FALSE}
+
+    # KPI 20a
+    
+    variable = "cip_vaccination_cip"  
+    eval.title =  "All under five children should be vaccinated every time a campaign takes place (CIP interviews)" 
+    problems = c("Disagree", "Strongly_disagree")
+    df = kpi_df
+    tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants")
+    
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+
+```
+```{r evalplot_cip_vaccination_cip_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+## Households
+
+This section presents the results of `r kpi_df %>% select(hh_participants_hh) %>% filter(hh_participants_hh != "NA") %>% nrow()` group interviews conducted in the period. Monitors conducted these interviews which had on average `r round(mean(suppressWarnings(as.numeric(kpi_df$hh_participants_hh)), na.rm = T))` participants each. Participants have been asked to discuss and so as to reach a consensus concerning the answers to the form questions (most of them were select one or select multiple question types). At the same time that this helps improving the programme, it contributes to promote participation, consultation and accountability towards beneficiaries while supporting awareness raising about Polio vaccination and other health-related issues at community level.
+
+<br>
+
+```{r plot_hh_education, fig.width = 8, fig.height=3}
+if(kpi_df$hh_hh_education%>%table()%>%length()>0) {
+  topbarplot(gsub("_", " ", kpi_df$hh_hh_education) %>% table, title = "Highest completed level of education of representatives in household group interviews", brewerpal = "Set2")
+}
+```
+
+
+<br>
+
+```{r dfbarplot_hh_sex_hh, warning=FALSE, message=FALSE, fig.width = 9, fig.height=8}
+if(kpi_df$hh_participants_hh %>% unique() != "NA") {
+  dfbarplot(df = kpi_df %>% 
+            mutate(hh_participants_hh = as.numeric(hh_participants_hh),
+                   hh_sex_hh = gsub("_", " ", hh_sex_hh)) %>%
+            mutate(hh_sex_hh = ifelse(hh_sex_hh == "Men only", "Men", 
+                                               ifelse(hh_sex_hh == "Women only", "Women", 
+                                                      "Mixed"))), 
+          varz = "district_name",
+          varx = "hh_sex_hh", 
+          vary = "hh_participants_hh",
+          title = "Participants in household interviews by district and sex of the group", 
+          ylab = "Number of participants", 
+          brewerpal = "Paired", colour = "darkgrey", 
+          angle = 0,
+          hjust = 0.5,
+          vjust = -0.5,
+          textsize = 3
+          ) 
+}
+
+```
+
+
+<br>
+
+```{r plot_hh_mainreasons, fig.width = 8, fig.height=3}
+if(kpi_df$hh_mainreasons_hh%>%table()%>%length()>0) {
+  topbarplot(gsub("_", " ", kpi_df$hh_mainreasons_hh) %>% table, title = "In your opinion, what is the main reason why some under-five children in your area are not vaccinated? (Household interviews)", brewerpal = "Set1")
+}
+```
+
+<br>
+
+```{r plot_mult_hh_trusted_info_source, warning=FALSE, message=FALSE, fig.width = 8, fig.height=3.5}
+if(kpi_df$hh_trusted_info_source%>%table()%>%length()>0) {
+  multipercentplot(df = kpi_df, 
+            variable = "hh_trusted_info_source", 
+            title = "% of household group interviews by most trusted sources of information  about children’s health and nutrition (Household interviews)", 
+            subtitle = paste0(
+              "group interviews with a total of ",
+              sum(as.numeric(kpi_df$hh_participants_hh), na.rm= TRUE),
+              " household representatives"),
+            brewerpal = "Dark3")
+}
+
+```
+
+<br>
+
+```{r func_best_comms_radio, message=FALSE}
+# Splits text separated by spaces
+
+best_comms <- function(data, province) {
+  df <- data$hh_hh_best_radio %>% str_split_fixed(., " ", 10) %>%
+  # Splits text separated by comma
+  str_split_fixed(., ",", 10) %>% 
+  # Converts to dataframe
+   as_tibble() %>% mutate_all(., as.character) %>% 
+   mutate_all(na_if, "") %>% select_if(~sum(!is.na(.)) > 0)
+
+  # Sets conditions for periods without data
+  
+  if (length(df) > 0) {
+  
+  df <- append(df$V1, df$V2) %>% as_tibble() %>% 
+    na.omit() %>% 
+    filter(value!="،") %>% mutate(value = trim.spaces(value))
+    
+  df$value = gsub("\\.", "", df$value)
+  df$value = toupper(df$value)
+    # Sets condition for multiple provinces based on max. colours in brewer palette
+    if (length(df$value %>% table) <= 12) {
+    
+    topbarplot(df$value %>% table,
+             title = paste("Most trusted radio channels in (", province, ")") , brewerpal = "Set3",
+             label = "Respondents") 
+  
+    }else{
+    
+    topbarplot(df$value %>% table,
+                            title = paste("Most trusted radio channels in (", province, ")"),
+             label = "Submissions")  + 
+      # Uses hue color scale
+      scale_fill_hue() 
+    }
+  }
+}
+
+```
+
+```{r topbar_best_radios, message=FALSE, warning=FALSE, results='asis'}
+
+
+for (i in seq_along(province_list)) { 
+  
+ plot <- best_comms(kpi_df %>% filter(province_name == province_list[i]), province_list[i])
+ 
+ subchunkify(plot, fig_height = 6)
+
+}
+
+
+```
+
+<br>
+
+```{r topbarplot_consent, fig.width = 8, fig.height=2.5}
+if(kpi_df$hh_data_consent_hh%>%table()%>%length()>0) {
+  topbarplot(kpi_df %>% 
+               # Subsets submissions with households only
+               filter(., grepl("Households",  internal_respondent)) %>% 
+               select(hh_data_consent_hh) %>% table(), 
+             title = "Would you agree to provide us with your phone number confidentially for participation in future project activities? (Household interviews)", 
+             brewerpal = "Accent", 
+             label = "Respondents")
+}
+```
+
+
+
+<br>
+
+```{r evalplot_hh_manners, fig.width= 8, fig.height= 2.5, message = FALSE, results='asis'}
+
+    # KPI 17b
+    variable = "hh_manners_hh"
+    eval.title =  "The social mobiliser is polite to community members and have good manners (Household Interviews)" 
+    problems = c("Disagree", "Strongly_disagree")
+df = kpi_df
+tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+
+# Prints eval plot
+evalbarplot(df, 
+            variable, 
+            eval.title, 
+            "Participants")
+
+# Prints toptreemap if there are problems
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+# toptreemap(df, 
+#            variable = variable, 
+#            title = paste0(tree.title,  " (Province-District-Cluster-Team number)"),  
+#            problems = problems,
+#            title_break = 80,
+#            brewerpal = "Reds")
+
+
+```
+```{r evalplot_hh_manners_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_hh_known, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+
+df = kpi_df
+variable = "hh_knowsm_hh"
+eval.title = "Everyone knows the social mobiliser who is working in this area to support Polio vaccination  (Household interviews)"
+tree.title = " cases where households disagreed that everyone knows the social mobiliser who is working in this area to support Polio vaccination"
+problems = c("Strongly_disagree","Disagree")
+
+# Prints eval plot
+evalbarplot(df, 
+            variable, 
+            eval.title, 
+            "Participants")
+
+# Prints toptreemap if there are problems
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+# toptreemap(df, 
+#            variable = variable, 
+#            title = paste0(tree.title,  " (Province-District-Cluster-Team number)"),  
+#            problems = problems,
+#            title_break = 80,
+#            brewerpal = "Reds")
+
+
+```
+```{r evalplot_hh_known_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_hh_respected, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+    # KPI 16b
+    variable = "hh_respected_hh"  
+    eval.title =   "The social mobiliser is respected by the community (Household interviews)" 
+    problems = c("Disagree", "Strongly_disagree")
+df = kpi_df
+tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+
+# Prints eval plot
+evalbarplot(df, 
+            variable, 
+            eval.title, 
+            "Participants")
+
+# Prints toptreemap if there are problems
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+# toptreemap(df, 
+#            variable = variable, 
+#            title = paste0(tree.title,  " (Province-District-Cluster-Team number)"),  
+#            problems = problems,
+#            title_break = 80,
+#            brewerpal = "Reds")
+
+```
+```{r evalplot_hh_respected_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_hh_smgoodjob, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+# KPI 14a
+
+    # Defines parameters
+    df = kpi_df
+    variable = "hh_smgoodjob_hh"
+    problems = c("Disagree", "Strongly_disagree")
+    eval.title = "Opinions concerning the statement that 'social mobilisers do a good job in providing information on Polio vaccination' (Household interviews)"
+    tree.title = " cases that HH representatives disagreed that social mobilisers do a good job in providing information on Polio vaccination"
+    
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants")
+    
+    # Prints toptreemap if there are problems
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+    # toptreemap(df, 
+    #            variable = variable, 
+    #            title = paste0(tree.title,  " (Province-District-Cluster-Team number)"),  
+    #            problems = problems,
+    #            title_break = 80,
+    #            brewerpal = "Reds")
+    
+```
+```{r evalplot_hh_smgoodjob_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_hh_smconvince_hh, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+    # KPI 21b
+    variable = "hh_smconvince_hh"  
+    eval.title =    "Social mobilisers have put enough effort to resolve vaccination refusals (Household interviews)" 
+    problems = c("Disagree", "Strongly_disagree")
+    df = kpi_df
+    tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants")
+    
+    # Prints toptreemap if there are problems
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+    # toptreemap(df, 
+    #            variable = variable, 
+    #            title = paste0(tree.title,  " (Province-District-Cluster-Team number)"),  
+    #            problems = problems,
+    #            title_break = 80,
+    #            brewerpal = "Reds")
+```
+```{r evalplot_hh_smconvince_hh_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+
+<br>
+
+```{r evalplot_hh_vaccination, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+# Sets parameters
+    # KPI 20b
+    variable = "hh_vaccination_hh"
+    eval.title =  "All under five children should be vaccinated every time a campaign takes place (Household interviews)" 
+    problems = c("Disagree", "Strongly_disagree")
+    df = kpi_df
+    tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants")
+    
+    # Prints toptreemap if there are problems
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+    # toptreemap(df, 
+    #            variable = variable, 
+    #            title = paste0(tree.title,  " (Province-District-Cluster-Team number)"),  
+    #            problems = problems,
+    #            title_break = 80,
+    #            brewerpal = "Reds")
+
+
+```
+```{r evalplot_hh_vaccination_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+#####
+
+## Cluster Communication Supervisors (CCS)
+
+This section presents the results from interviews by monitors with Cluster Communication Supervisors (CCS).
+
+```{r fastplot_sup_supervisor_title, fig.width = 8, fig.height=2.5}
+
+# Conditional plot to allow for visualisation of variable with one level
+if (length(table(kpi_df$sup_supervisor_title)) == 1) {
+  
+fastplot(kpi_df,
+  varname = "sup_supervisor_title", 
+         title = "Title of supervisors",  
+         brewerpal = "Dark2", hjust = -14)
+  
+}else{
+  
+topbarplot(
+  kpi_df %>% 
+    select(sup_supervisor_title) %>% 
+    mutate(sup_supervisor_title = gsub("_", " ", sup_supervisor_title)) %>% 
+    table, 
+           title = "Title of supervisors", 
+           brewerpal = "Dark2", 
+           label = "Responses")
+  
+}
+
+
+```
+
+<br>
+
+```{r height_plot_support_dates}
+# Sets plot height dynamically
+plot_height = kpi_df$sup_supportdate %>%
+             na.omit() %>%
+             ymd() %>% 
+             format("%d %b %Y") %>% 
+             table %>% length() * .35
+
+```
+
+
+```{r plot_support_dates, warning=FALSE, message=FALSE, results='asis'}
+
+# This plot is only presented for province-based reports.
+
+for (i in seq_along(province_list)) { 
+  
+  title = paste(province_list[i], " :When did you last visit the SM to provide support? (Supervisor interviews)")
+  brewerpal = "Set3" 
+  label = "Responses"
+  tmp <- kpi_df %>% filter(province_name == province_list[i])
+  tmp <- tmp$sup_supportdate %>% 
+             na.omit() %>%
+             ymd() %>% 
+             format("%d %b %Y") %>% 
+             #as.character() %>%
+             table
+  
+  ncol(tmp)
+  
+  if(nrow(tmp) > 0) {
+    height <- ifelse(nrow(tmp) == 1, 2, nrow(tmp))
+    if(height > 8) 
+      height <- 8
+    plot <- barplot(tmp, 
+             title = title, 
+             brewerpal = "Set3") + 
+    
+             scale_fill_hue()
+   
+    subchunkify(plot, fig_height = height)
+  }
+  
+ 
+
+}
+
+```
+
+```{r lineplot_support_dates, warning=FALSE, message=FALSE, eval=FALSE, echo=FALSE}
+# Plots a line with submissions by date
+
+## Prepares dataset
+lineplot <- function(df, title) {
+  df <- df %>% 
+  select(sup_supportdate) %>% 
+  na.omit %>% 
+  mutate(sup_supportdate = ymd(sup_supportdate)) %>% 
+  rename(Date = sup_supportdate) %>% 
+  group_by(Date) %>% 
+  dplyr::summarise(Submissions = dplyr::n()) %>% 
+  ungroup() 
+
+df %>% 
+  ## Prepares plot
+  ggplot(., aes(Date, Submissions)) + 
+  ## Defines geometry line
+  geom_line(colour="lightgreen", size = 2) +
+  ## Sets theme / design
+  theme_linedraw() +
+  ## Defines geometry points
+  geom_point(colour="darkgreen") +  
+  ## Removes label of x axix
+  xlab("") + 
+  ## Sets label for y axis
+  ylab("Observations") + 
+  # Chnages format of dates in the plot display
+  scale_x_date(date_labels = "%d %b %y", date_breaks  ="4 day") + 
+  # Sets options font formatting options
+  theme(
+    axis.text.x = element_text(colour="grey20", size=9,angle=80,hjust=.5,vjust=.5,face="plain"),
+    axis.text.y = element_text(colour="grey20",size=9,angle=0,hjust=1,vjust=0,face="plain"),
+    axis.title.y = element_text(colour="grey20",size=10,angle=90,hjust=.5,vjust=.5,face="plain"),
+        plot.title = element_text(size = 14, face = "bold", vjust=1.2)) +
+  ## Sets title and subtitle
+  ggtitle(stringr::str_wrap(title, width = 60),
+          subtitle =  paste("N = ", 
+                            format(nrow(df), big.mark=","), " responses",
+                            " from ", 
+                            start_date %>% format("%d %B %Y"), 
+                            " to ", 
+                            end_date %>% format("%d %B %Y"),
+                            sep = "")) +
+  # Adjust scales to integer numbers
+  scale_y_continuous(breaks = function(x) unique(floor(pretty(seq(0, (max(x) + 1) * 1.1))))) 
+}
+
+# This has been commented
+
+# region_list <- unique(kpi_df$region)
+# for (i in seq_along(region_list)) { 
+#   
+#   title = paste(region_list[i], " :When did you last visit the SM to provide support? (Supervisor interviews)")
+# 
+#   tmp <- kpi_df %>% filter(region == region_list[i])
+#   
+#   ncol(tmp)
+#   
+#   if(nrow(tmp) > 0) {
+#     
+#     plot <- lineplot(tmp, 
+#              title = title)
+#    
+#     subchunkify(plot)
+#   }
+# }
+
+```
+
+
+
+<br>
+
+```{r bootplot_sup_supportdays, message=FALSE, fig.width = 8, fig.height=3}
+if(kpi_df$sup_supportdays %>% unique() %>% na.omit() %>% length() > 1) {
+  topbootplot(kpi_df %>% 
+                select(sup_supportdays) %>% 
+                mutate(sup_supportdays = suppressWarnings(as.numeric(sup_supportdays))) %>%
+                unlist() %>% na.omit() %>% as.vector(), col = "lightblue", title = "Days in the last 30 days that CCSs met SMs to provide support")
+}
+```
+
+<br>
+
+```{r toptreemap_sup_supportdays, warning=FALSE, message=FALSE, results='asis'}
+# # Creates auxiliary dataframe
+# supportdays <- kpi_df %>%
+#   # Selects variables of interest
+#   select(sup_supportdays,
+#          region,
+#          province_name,
+#          district_name,
+#          cluster,
+#          internal_team_number) %>% 
+#   na.omit()  %>%
+#   # Filters those with problems
+#   filter(UQ(as.name("sup_supportdays")) < 5) %>% 
+#   # Creates new variable with ID
+#   mutate(id = paste(province_name,
+#                     cluster,
+#                     internal_team_number,
+#                     sep="-")
+#   ) %>%
+#   group_by(region, district_name, id) %>%
+#   dplyr::summarise(freq = n()) 
+# 
+# if(nrow(supportdays) <= 30) {
+# 
+# # Plots tree map plot with locations of payment delays
+# toptreemap_num(df = kpi_df, 
+#                        variable = "sup_supportdays", # Example of variable
+#                        tree_title = "Cases where number of supportive supervision days in the last 30 days by CCS and DCO is less than 5 days (Supervisor interviews)", # Example of title
+#                        brewerpal = "Reds", # Brewer palette see display.brewer.all()
+#                        problems_num = 5, # Criteria of problems (in days)
+#                        tree_titlebreak = 80, # Title break in # of characters
+#                lessthan = TRUE # condition if less than should be used
+#                )
+# }else{
+#   
+# cat("*Cases where number of supportive supervision days in the last 30 days by CCS and DCO is less than 5 days (Supervisor interviews)*")
+#   
+# # Prints table with clusters
+# knitr::kable(supportdays %>% ungroup() %>%
+#                mutate(`#` = 1:nrow(supportdays)) %>%
+#                select(`#`, everything()),
+#      # Sets column names for table
+#       col.names = c("#", "Region", "District", "Cluster-Team", "Freq. of problems"),
+#      # Sets alignment of text
+#            align = c("l", "l", "l", "l", "l"),
+#      caption = "Cases where number of supportive supervision days in the last 30 days by CCS and DCO is less than 5 days (Supervisor interviews)"
+#      ) 
+#   
+# }
+
+variable = "sup_supportdays" 
+problems_num = 5
+tmp_table <- filter_table_by_num_less_than(kpi_df, variable , problems_num)
+
+if(nrow(tmp_table) > 0) {
+  cat(paste("**Table below shows ", nrow(tmp_table), " cases where number of supportive supervision days in the last 30 days by CCS and DCO is less than 5 days (Supervisor interviews)**"))
+}
+
+
+```
+```{r toptreemap_sup_supportdays_tbl, message=FALSE, warning=FALSE}
+if(nrow(tmp_table) > 0) {
+  
+    print_table(tmp_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+rm(tmp_table)
+```
+
+
+<br>
+
+```{r plot_mult_sup_challenges, fig.width = 8, fig.height=3, results='asis'}
+    # KPI 23b
+      variable = "sup_challenges_sup" 
+      eval.title =  "Challenges that the ICN team is facing in the area (Supervisor interviews)" 
+      problems = c("Concerns", "Opposition", "Tough_refusals", 
+                   "Mobile populations", "CIP_not_supportive")
+      # Prints plot with custom function
+      multipercentplot( 
+        df = kpi_df, # Data frame
+        variable = variable, # Variable 
+        title = paste0("% of respondents - ", eval.title),
+        brewerpal = "Dark2",  # Colour palette for barplot
+        subtitle = "observations", # Subtitle clarification for barplot
+        titlebreak = 60, # Number of characters in barplot title
+        hjust = -0.1, # Horizontal justification of barplot annotation
+        tree_title = paste("Cases of problem:", eval.title), # Title of tree map
+        tree_titlebreak = 90, # Number of characters in tree map 
+        problems = problems # Parameters for problems
+        )
+      
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                paste0(paste(" cases of problem:", eval.title)), "**"))
+    }
+
+```
+```{r plot_mult_sup_challenges_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r plot_mult_sup_smissues, fig.width = 9, fig.height=3.5, results='asis'}
+# KPI 24a
+      variable = "sup_smissues"    
+      eval.title =  "Reported issues with SM in the area" 
+      problems = c("Inadequate_behaviour", "Low_presence",
+                   "Low_monilisation", "Not_accepted")
+      topbartreeplot(df = kpi_df,
+                     variable = variable, 
+                     brewerpal = "Paired", 
+                     problems = problems,
+                     title = eval.title,
+                     tree_title = paste0("Cases of problems: ", eval.title)
+      )
+      
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**", nrow(probs_table), 
+                paste0(paste(" cases of problem:", eval.title)), "**"))
+    }
+
+```
+```{r plot_mult_sup_smissues_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_sup_knowsm, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+
+# Sets parameters
+df = kpi_df
+variable = "sup_knowsm_sup"
+eval.title = "Everyone knows the social mobiliser who is working in this area to support Polio vaccination  (Supervisor interviews)"
+tree.title = " cases where supervisors disagreed that everyone knows the social mobiliser who is working in this area to support Polio vaccination"
+problems = c("Strongly_disagree","Disagree")
+title_break = 70
+
+# Prints eval plot
+evalbarplot(df, 
+            variable, 
+            eval.title, 
+            title_break = title_break,
+            "Participants")
+
+# Prints toptreemap if there are problems
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+
+
+```
+```{r evalplot_sup_knowsm_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_sup_manners, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+
+    # KPI 17d
+    variable = "sup_manners_sup"
+    eval.title =  "The social mobiliser is polite to community members and has good manners (Supervisor interviews)" 
+    problems = c("Disagree", "Strongly_disagree")
+df = kpi_df
+tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+
+# Prints eval plot
+evalbarplot(df, 
+            variable, 
+            eval.title, 
+            "Participants")
+
+# Prints toptreemap if there are problems
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title), "**")
+    }
+
+
+```
+```{r evalplot_sup_manners_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+<br>
+
+```{r evalplot_sup_respected, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+
+# Sets parameters
+    # KPI 16d
+    variable = "sup_respected_sup"
+    eval.title =   "The social mobiliser is respected by the community (Supervisor interviews)" 
+    problems = c("Disagree", "Strongly_disagree")
+df = kpi_df
+tree.title = paste0("cases of disagreement with the statement: '", eval.title, "'")
+
+# Prints eval plot
+evalbarplot(df, 
+            variable, 
+            eval.title, 
+            "Participants")
+
+# Prints toptreemap if there are problems
+probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title), "**")
+    }
+
+
+```
+```{r evalplot_sup_respected_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_sup_smgoodjob, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+# KPI 14c
+
+# Sets parameters
+df = kpi_df
+variable = "sup_smgoodjob_sup"
+eval.title =  "The social mobiliser does a good job in providing information on Polio vaccination  (Supervisor interviews)"
+tree.title = " cases where supervisors disagreed that social mobiliser does a good job in providing information on Polio vaccination"
+problems = c("Strongly_disagree","Disagree")
+title_break = 70
+    
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants")
+    
+    # Prints toptreemap if there are problems
+   probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+
+
+```
+```{r evalplot_sup_smgoodjob_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_sup_smconvince, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+
+    # KPI 21d
+    variable = "sup_smconvince_sup"
+    eval.title =  "Social mobilisers have put enough effort to resolve vaccination refusals (Supervisor interviews)" 
+    problems = c("Disagree", "Strongly_disagree")
+    df = kpi_df
+    tree.title = paste0(" cases of disagreement with the statement: '", eval.title, "'")
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants")
+    
+    # Prints toptreemap if there are problems
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+
+
+```
+```{r evalplot_sup_smconvince_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+
+<br>
+
+```{r evalplot_sup_campsupport, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+# KPI 15
+    
+    # Sets parameters
+    df = kpi_df
+    variable = "sup_campsupport_sup"
+    eval.title =  "The social mobiliser effectively supported vaccination teams during the campaign (Supervisor interviews)"
+    tree.title = " cases where supervisors disagreed that social mobiliser effectively supported vaccination teams during the campaign"
+    problems = c("Strongly_disagree","Disagree")
+    title_break = 70
+    
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants")
+    
+    # Prints toptreemap if there are problems
+   probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+
+```
+```{r evalplot_sup_campsupport_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+<br>
+
+```{r evalplot_coordination_sup, fig.width= 8, fig.height= 3, message = FALSE, results='asis'}
+# KPI 8 Level of coordination between social mobilisers and the vaccination team.
+
+    # Defines parameters
+    df = kpi_df
+    variable = "sup_coordination_sup"
+    problems = c("Poor", "Very_poor", "Not_applicable")
+    eval.title = "What is your assessment about the coordination between the social mobiliser and the vaccination team? (Supervisor interviews)"
+    tree.title = " cases that supervisors reported 'not applicable', poor or very poor coordination between the social mobiliser and the vaccination team"
+    
+    
+    # Prints eval plot
+    evalbarplot(df, 
+                variable, 
+                eval.title, 
+                "Participants",
+                varlevel = "vgood_vpoor")
+    
+    # Prints toptreemap if there are problems
+    probs_table <- problems_table(kpi_df, variable, problems)
+    if(nrow(probs_table) > 0) {
+      cat(paste("**Table below shows ", nrow(probs_table), 
+                tree.title, "**"))
+    }
+
+```
+```{r evalplot_coordination_sup_tbl, message=FALSE, warning=FALSE}
+if(nrow(probs_table) > 0) {
+  
+    print_table(probs_table, cols_align_center = c("Cluster", "Team", "Freq. Reported"))
+}
+```
+
+
+<br>
+
+#####
+
+# Results of key questions with qualitative data 
+
+This section presents samples of responses to open-ended questions. In this questions, respondents could freely provide their responses as text. These questions were presented to respondents as closing questions for interviews and observation reports.
+
+
+```{r function_topwordcloud}
+topwordcloud <- function(var, min.freq = 2, stopwords = "", brewerpal = "Set3", brewerpalnr = 13, seed = 1234, scale = c(4,.2), language = "english") {
+# Custom function
+  ## var = text variable such as df$var
+  ## min.freq = minimum frequency of mentions
+  ## stopwords = custom words to be excluded from the plot
+  ## brewerpal = string with brewer.pal palette in reverted order (see: https://cran.r-project.org/web/packages/RColorBrewer/RColorBrewer.pdf)
+  ## brewerpalnr = numeric value with max. number of colors from palette
+  ## seed = random sequence generator 
+  ## scale = A vector of length 2 indicating the range of the size of the words.
+  
+  
+  # Loads required packages in invisible mode to avoid messages
+  suppressPackageStartupMessages(library(dplyr)) ## For data wrangling
+  suppressPackageStartupMessages(library(RColorBrewer)) ## For plot colors  
+  suppressPackageStartupMessages(library(wordcloud)) ## For plot colors
+  suppressPackageStartupMessages(library(tm)) ## For text mining
+  suppressPackageStartupMessages(library(stopwords)) ## For parsing stopwords in different langauges
+  
+  clean.text = function(x)
+  {
+     # tolower
+     x = tolower(x)
+     # remove rt
+     x = gsub("rt", "", x)
+     # remove at
+     x = gsub("@\\w+", "", x)
+     # remove punctuation
+     x = gsub("[[:punct:]]", "", x)
+     # remove numbers
+     x = gsub("[[:digit:]]", "", x)
+     # remove links http
+     x = gsub("http\\w+", "", x)
+     # remove tabs
+     x = gsub("[ |\t]{2,}", "", x)
+     # remove blank spaces at the beginning
+     x = gsub("^ ", "", x)
+     # remove blank spaces at the end
+     x = gsub(" $", "", x)
+     return(x)
+  }
+  
+# Manipulating string variable 
+## Selecting variable/question
+df <- var  %>% 
+  ## Converting to UTF8
+  enc2utf8() %>% 
+  clean.text() %>%
+  na.omit()
+  # ##Replacing puctuation and symbols
+  # stringr::str_replace_all(pattern = "[[:punct:]]" , "") %>% 
+  # ## Replacing paragraph signs
+  # stringr::str_replace_all(pattern = "\n" , " ") %>%
+  # ## Replacing puctuation numbers generated due to punctuation signs
+  # stringr::str_replace_all(pattern = "[[:digit:]]" , "") %>%
+  # ## Replacing multiple spacing
+  # stringr::str_replace_all(pattern = "\\s+" , " ") %>% 
+  # ## Setting strings to lower case
+  # tolower()
+
+# Converting to corpus and 
+corpus  <- Corpus(VectorSource(df)) %>%  
+  ## Removing english stopwords as well as other custom words
+  tm::tm_map(removeWords, 
+             c(stopwords::stopwords(language, 
+                                    source = "stopwords-iso"),
+               stopwords)
+              ) %>%
+
+  ## Eliminating extra white spaces
+  tm::tm_map(stripWhitespace) 
+
+# Creating a document term matrix
+dtm <- tm::DocumentTermMatrix(corpus)
+
+# Setting random sequence for reproducibility
+set.seed(seed)
+
+# Creating matrix with corpus
+matrix.cloud <- as.matrix(dtm)
+
+# Computing word frequency
+freq.cloud <- sort(colSums(matrix.cloud), decreasing=TRUE)
+
+# Defining labels
+label.cloud <- names(freq.cloud)
+
+# Creating dataframe
+data.cloud <- data.frame(word = label.cloud, 
+                         freq = freq.cloud) 
+
+# Plotting cloud 
+suppressWarnings(
+  wordcloud::wordcloud(
+    toupper(data.cloud$word), 
+    data.cloud$freq, 
+    min.freq = 1, 
+    scale = scale, 
+    rot.per=.15,
+    colo = (
+      rev(brewer.pal(brewerpalnr, brewerpal))
+      ), 
+    random.order = FALSE)
+  )
+
+}
+```
+
+
+```{r function_randomanswers}
+randomsanswers <- function(df = kpi_df, key_var, sec_var, sampleprop = 1, seed = 1234, explanation = "Cluster: ") {
+  # Custom function for sampling answers
+
+  # Loads required packages
+  suppressPackageStartupMessages(library(dplyr)) ## For data wrangling
+  suppressPackageStartupMessages(library(stringr)) ## For plot colors  
+  
+  
+  # Custom function for capitalising first letters
+  firstcapital = function(string) {
+    paste0(
+      toupper(
+        substr(string, 1, 1)
+        ), 
+      substring(string, 2)
+      )
+    }
+  
+  # Filtering to remove NAs and no/none answers
+  df_a <- df[which(!grepl("I don't know",
+                          df[[key_var]]) & !is.na(df[key_var])
+                   ),] %>%  
+    select_(key_var, sec_var) %>%
+    filter(!str_squish(tolower(UQ(as.name(key_var)))) %in% c("no", "nothing", ".", 
+                                                 "no suggestion", "no idea", 
+                                                 "no problem", "o", "0", "t", 
+                                                 "no suggistion", "n0")) %>%
+    mutate(Comment = str_squish(UQ(as.name(key_var))), 
+           Cluster = str_squish(UQ(as.name(sec_var))))
+
+  
+  # Creates an auxiliary dataset
+  df_b <- df_a %>%
+    # Concatenates secondary variable and storing it into a new variable "secondary" 
+    # mutate(secondary = paste0("\" (", explanation, df_a[[sec_var]],  
+    #                           ")", 
+    #                           sep="")
+    #        ) %>%  
+    # Selects variables
+    # select_(key_var, "secondary") %>%
+    # Draws a random sample of answers 
+    dplyr::sample_n(round(nrow(.) * as.numeric(sampleprop))) %>% 
+    # Omits NAs
+    na.omit() %>%
+    select(Cluster, Comment)
+  
+  return(df_b)
+    
+  
+  # Converts to UTF8
+  # df_b[[key_var]] <-  df_b[[key_var]] %>% 
+  #   enc2utf8()
+    
+  
+  # Binds strings from two variables into one and transforming data table into a vector
+  # output <- return(paste(df_b[[key_var]], 
+  #                 df_b[["secondary"]], 
+  #                 sep = ""
+  #                 ) %>% 
+  #   ## Removes punctuation in the start of strings
+  #   stringr::str_replace_all(pattern = "^[[:punct:]] " , "") %>% 
+  #   ## Replaces multiple spacing
+  #   stringr::str_replace_all(pattern = "\\s+" , " ") %>% 
+  #   ## Replaces line breaks
+  #   stringr::str_replace_all(pattern = "\\n" , "") %>% 
+  #   # Uses custom sub-function
+  #   firstcapital(.) %>% 
+  #   ## Pastes quotation marks
+  #   paste0("\"", ., "") %>% 
+  #   ## Adds hyphen for bullet points
+  #   paste0('- ', .)  %>% 
+  #   ## Adds end periods
+  #   paste0(., '.') %>% 
+  #   ## Uses cat to print output 
+  #   cat(sep="\n") 
+  # )
+  # # Returns answers
+  # return(output)
+}
+
+```
+
+<br>
+
+## Suggestions and comments from respondents
+
+The following plot presents a word cloud with the most frequent keywords used by respondents in the optional question about comments or suggestions in the end of each interview application. Text data was translated automatically using the Google Cloud Translate API. Therefore, translation should be taken as indicative only. More detailed analysis requires examination of text in original language. Words with the same frequency have the same colours. After the plot, a random sample of answers is provided.
+
+<br>
+
+### Word cloud of suggestions and comments
+
+```{r translates_final_suggestion, eval=translate_comments}
+library(googleAuthR)
+library(googleLanguageR)
+# Translates string to English
+#
+gl_auth("google_api/unicef-kpi-95d3c76baa03.json")
+kpi_df$final_suggestion_en <- gl_translate(enc2utf8(as.character(kpi_df$final_suggestion)), target = "en")$translatedText
+
+# Corrects typing / translation mistakes
+kpi_df$final_suggestion_en <- gsub("vagina", "vaccine", kpi_df$final_suggestion_en)
+
+```
+
+```{r wordcloud_final_suggestion, fig.width = 6, fig.height = 4, warning=FALSE, message = FALSE}
+
+# Plots wordcloud with custom funciton
+if(translate_comments == TRUE) {
+  topwordcloud(
+    # Defines variable
+    var = kpi_df$final_suggestion_en,
+    # Sets custom frequency for keywords (default is 2)
+    min.freq = 10, 
+    # Sets custom palette
+    brewerpal = "Dark2", 
+    # Sets custom stopwords (words to be removed from the plot)
+    stopwords = c("Afghanistan", "Polio", "yes", "NIL", 
+                  "No", "nil", "no", "Nothing"),
+    # Sets proxy language for parsing stop words,
+    language = "english"
+    )
+} else {
+  topwordcloud(
+    # Defines variable
+    var = kpi_df$final_suggestion,
+    # Sets custom frequency for keywords (default is 2)
+    min.freq = 10, 
+    # Sets custom palette
+    brewerpal = "Dark2", 
+    # Sets custom stopwords (words to be removed from the plot)
+    stopwords = c("Afghanistan", "Polio", "yes", "NIL", 
+                  "No", "nil", "no", "Nothing"),
+    # Sets proxy language for parsing stop words,
+    language = "persian"
+    )
+}
+
+```
+
+<br>
+
+### Sample of comments and suggestions
+
+A reproducible random sample of 30% of the received answers is presented below with indication of the location of the activity. Answers have not been edited in order to preserve their original version.
+
+```{r answers_final_suggestion}
+# Prints formatted random sample of answers with custom function
+comments <- randomsanswers(
+  ## Defines dataframe
+  df = kpi_df, 
+  ## Sets key variable of interest
+  key_var = ifelse(translate_comments == TRUE, "final_suggestion_en", "final_suggestion"),
+  ## Sets secondary variable for parentheses after quotation / answers
+  sec_var = "cluster", 
+  ## Sets proportion of data to be sampled
+  sampleprop = .30)
+
+print_table(comments, cols_width=c(2, 4.27), 
+            cols_align_center = c("Comment"))
+
+```
+
+<br>
+
+
+## Final notes from monitors
+
+The following plot presents a word cloud with the most frequent keywords used by monitors in the optional field "Final notes" in the end of each interview application. Text data was translated automatically using the Google Cloud Translate API. Therefore, translation should be taken as indicative only. More detailed analysis requires examination of text in original language. Words with the same frequency have the same colours. After the plot, a random sample of answers is provided.
+
+<br>
+
+### Word cloud of final notes
+
+```{r translates_finalnotes, eval=translate_comments}
+
+# Translates string to English
+gl_auth("google_api/unicef-kpi-95d3c76baa03.json")
+kpi_df$final_notes_en <- gl_translate(enc2utf8(as.character(kpi_df$final_notes)), target = "en")$translatedText 
+
+# Corrects typing / translation mistakes
+kpi_df$final_notes_en <- gsub("vagina", "vaccine", kpi_df$final_notes_en)
+
+```
+
+
+
+```{r wordcloud_final_notes, fig.width = 6, fig.height = 5, warning = FALSE, message = FALSE }
+
+if(translate_comments == TRUE) {
+  topwordcloud(
+    # Defines variable
+    var = kpi_df$final_notes_en,
+    # Sets custom frequency for keywords (default is 2)
+    min.freq = 10, 
+    # Sets custom palette
+    brewerpal = "Dark2", 
+    # Sets custom stopwords (words to be removed from the plot)
+    stopwords = c("Afghanistan", "Polio"),
+    # Sets proxy language for parsing stop words,
+    language = "english"
+    )
+} else {
+  topwordcloud(
+    # Defines variable
+    var = kpi_df$final_notes,
+    # Sets custom frequency for keywords (default is 2)
+    min.freq = 10, 
+    # Sets custom palette
+    brewerpal = "Dark2", 
+    # Sets custom stopwords (words to be removed from the plot)
+    stopwords = c("Afghanistan", "Polio"),
+    # Sets proxy language for parsing stop words,
+    language = "persian"
+    )
+}
+```
+
+<br>
+
+### Sample of monitors' final notes
+
+A reproducible random sample of 30% of the received answers is presented below with indication of the location of the activity. Answers have not been edited in order to preserve their original version.
+
+```{r answers_final_notes}
+# Prints formatted random sample of answers with custom function
+notes <- randomsanswers(
+  ## Defines dataframe
+  df = kpi_df, 
+  ## Sets key variable of interest
+  key_var = ifelse(translate_comments == TRUE, "final_notes_en", "final_notes"),
+  ## Sets secondary variable for parentheses after quotation / answers
+  sec_var = "cluster", 
+  ## Sets proportion of data to be sampled
+  sampleprop = .30)
+
+print_table(notes, cols_width=c(2, 4.27), 
+            cols_align_center = c("Comment"))
+
+```
+
+
+
+#####
+
+# Annex - Indicator metadata and minimum standards
+
+```{r table_metadata}
+
+# Prints table with list of indicators and criteria
+ #  knitr::kable(metadata[,c(5:6, 9)],
+ # # Sets alignment and column names for table
+ #             col.names = c("Indicator", "Minimum standards for green status", "Code"),
+ #             align = c("l", "c", "c")) 
+tmp_metadata <- metadata[,c(5:6, 9)]
+colnames(tmp_metadata) = c("Indicator", "Minimum Standard for Greem Status", "Short Name")
+print_table(tmp_metadata, cols_width = c(2.5, 2.6, 1.17), 
+            cols_align_center = c("Indicator", 
+                                  "Minimum Standard for Greem Status", 
+                                  "Short Name"))
+
+```
+
+<br>
+<br>
+
+# References
+
+```{r bibliography, results="asis", warning=FALSE}
+# Creates a custom function to print out bibliography with used packages (obligatory for open source software use)
+
+autobib <- function(packages = packages) {
+  # packages = character vector with list of packages used
+  require(dplyr)
+  
+  ## Prepares auxiliary dataframe with outout from base function "citation"
+  bibliography <- suppressWarnings(lapply(packages, FUN=citation))
+  
+  ## Extracts only textVersion from citation output
+  bibliography <- sapply(seq_along(bibliography), 
+                         function(i)
+                           bibliography[[i]][1]$textVersion)  %>% 
+    
+    # Converts into a tibble dataframe
+    as_tibble() %>%
+    # Arranges alphabetically 
+    arrange(value) %>% 
+    # Adds hyphen to create bullet points when rendered
+    mutate(value = paste0("- ", value)) %>% 
+    # Unlists character vector only
+    unlist() %>% 
+    ## Uses cat to print output 
+    cat(sep="\n") 
+  
+  
+}
+
+# Prints automated bibliography 
+autobib(packages)
+```
+
+
+
+
+<br>
+
+```{r tmtime, echo=FALSE, warning=FALSE, message=FALSE}
+# Saving time elapsed to process tm_map 
+# (type tm to know how long it took to run the code chunk above)
+tmtime <- Sys.time() - start_time
+```
+
+
+**Time elapsed to generate this report**: `r round(tmtime, 1)` minutes.
+
+
+```{r cleans_environment, eval = clean_env}
+# Removes auxiliary dataframes
+rm(list = ls())
+```
