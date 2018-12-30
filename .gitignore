@@ -6,12 +6,12 @@
 code_checking.R
 another.docx
 
-clean_files/
+clean_files/*
 figure/
 index_cache/
 index_files/
 reports/
 
-google_api/
+google_api/*
 
 ext_files/login_credentials.R
