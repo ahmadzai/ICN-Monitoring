@@ -3,12 +3,12 @@
 .RData
 .Ruserdata
 
-clean_file/*
-figure/*
-index_cache/*
-index_files/*
-reports/*
+clean_file/
+figure/
+index_cache/
+index_files/
+reports/
 
-google_api/*
+google_api/
 
 ext_files/login_credentials.R
