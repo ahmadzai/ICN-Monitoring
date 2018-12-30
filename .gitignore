@@ -3,6 +3,9 @@
 .RData
 .Ruserdata
 
+code_checking.R
+another.docx
+
 clean_files/
 figure/
 index_cache/

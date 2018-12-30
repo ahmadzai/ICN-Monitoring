@@ -1,9 +1,0 @@
-"internal_cluster","internal_subdistrict","internal_district","district_name","province_name","region","count","interviews","prob_ind1","prob_ind2","prob_ind3","prob_ind4","prob_ind5","prob_ind6","prob_ind7","prob_ind8","prob_ind9","prob_ind10","prob_ind11","prob_ind12","prob_ind13","prob_ind14","prob_ind15","prob_ind16","prob_ind17","prob_ind18","prob_ind19","prob_ind20","prob_ind21","prob_ind22","prob_ind23","prob_ind24","prob_ind25","prob_ind26","prob_ind27","prob_ind28","prob_ind29","prob_ind30","prob_ind31","prob_ind32","prob_ind33","ind_problems","coreind_problems"
-"259","Kabul Part12","101","Kabul","Kabul","Central",4,12,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0
-"260","Kabul Part12","101","Kabul","Kabul","Central",4,12,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0
-"264","Kabul Part12","101","Kabul","Kabul","Central",5,15,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0,0,0,1,0,1,1,0,0,0,0,0,,0,3,0
-"146","Kabul Part8","101","Kabul","Kabul","Central",2,2,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,,0,1,0
-"148","Kabul Part8","101","Kabul","Kabul","Central",3,4,0,0,0,0,0,0,,0,0,0,0,0,,0,0,0,0,0,0,0,0,0,0,0,0,0,,,0,0,,,0,0,0
-"166","Kabul Part8","101","Kabul","Kabul","Central",3,3,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,,0,2,1
-"170","Kabul Part8","101","Kabul","Kabul","Central",3,4,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,1,0,3,2
-"177","Kabul Part8","101","Kabul","Kabul","Central",3,5,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,1,0,3,2
