@@ -24,12 +24,13 @@ knitr::knit_hooks$set(inline = function(x) {
 prettyNum(x, decimal.mark = ".")
 })
 ``` 
+
 ```{r filter_params}
 #---------------------------- Setting For The Report ----------------------#
 # format: 2018-12-31 (Y-mm-dd)
-start_date <- "2018-11-01"  # Start date, from where report will include submissions
+start_date <- "2018-12-01"  # Start date, from where report will include submissions
 
-end_date <- "2018-11-30"    # End date, till which report will have submissions ""
+end_date <- "2018-12-31"    # End date, till which report will have submissions ""
 
 filter_regions <- c("Central") # or single or multiple East, West, Southeast, South, Central, Northeast, North
 
@@ -1038,7 +1039,11 @@ The following plots present heat maps of indicators aggregated at different geog
 
 ```{r func_subchunkify, warning=FALSE, message=FALSE}
 # this function is super important for dynamic charts generation 
-subchunkify <- function(g, fig_height=4, fig_width=9, print=FALSE) {
+subchunkify <- function(g, fig_height=4, fig_width=9, print=FALSE, chunk_name = NULL) {
+  
+  if(is.null(chunk_name)) {
+     chunk_name <- floor(runif(1) * 20000)
+  }
   g_deparsed <- paste0(deparse(
     function() {
       if(print == TRUE) {
@@ -1051,7 +1056,7 @@ subchunkify <- function(g, fig_height=4, fig_width=9, print=FALSE) {
   ), collapse = '')
   
   sub_chunk <- paste0("
-  `","``{r sub_chunk_", floor(runif(1) * 20000), ", fig.height=", fig_height, ", fig.width=", fig_width, ", echo=FALSE}",
+  `","``{r sub_chunk_", chunk_name , ", fig.height=", fig_height, ", fig.width=", fig_width, ", echo=FALSE}",
   "\n(", 
     g_deparsed
     , ")()",
@@ -1131,7 +1136,9 @@ for (i in seq_along(province_list)) {
                     x.axis = "Areas",
                     filterparam = province_list[i],
                     filtervar = "Provinces")
- subchunkify(plot, fig_height = heatmap_height_dist[i])
+ chunk_name <- paste("heatmap_area_district_", i)
+ 
+ subchunkify(plot, fig_height = heatmap_height_dist[i], chunk_name = chunk_name)
 
 }
 
@@ -1242,8 +1249,8 @@ for (i in seq_along(districts_list)) {
                     x.axis = "Areas",
                     filterparam = districts_list[i], 
                     filtervar = "Districts")
- 
-  subchunkify(plot, fig_height = heatmap_height_clstr[i])
+  chunk_name <- paste("heatmap_area_cluster_", i)
+  subchunkify(plot, fig_height = heatmap_height_clstr[i], chunk_name = chunk_name)
 
 }
 
@@ -1261,8 +1268,8 @@ for (i in seq_along(district_list)) {
   
  plot <- vecheatmap(filterparam = district_list[i], df = problems_long,
                     filtervar = "Districts")
- 
- subchunkify(plot, fig_height = heatmap_height_clstr[i])
+ chunk_name <- paste("heatmap_multi_clusters_coreind_", i)
+ subchunkify(plot, fig_height = heatmap_height_clstr[i], chunk_name = chunk_name)
 
 }
 
@@ -1272,7 +1279,7 @@ rm(district_list)
 ```
 
 
-```{r get_map, message=FALSE, warning=FALSE, cache = TRUE, eval=printmap, results='asis'}
+```{r get_map, message=FALSE, warning=FALSE, eval=printmap, results='asis'}
 # create a data set with gps information. 
 gps_df <- kpi_df %>%
   filter(!is.na(lon))
@@ -1591,7 +1598,7 @@ if(kpi_df$monitor_fieldbookaccess%>%table()%>%length() > 0) {
                    single_hjust = -13
             )
     # print the chart returned from the above function
-    subchunkify(chart, fig_height = 2.5)
+    subchunkify(chart, fig_height = 2.5, chunk_name = "topbartreeplot_fieldbookaccess_chart")
 }
     
     # now let's find if there are any problems
@@ -1629,7 +1636,7 @@ df = kpi_df
                 "Participants",
                 varlevel = "vgood_vpoor",
                 title_break = 80)
-    subchunkify(chart, fig_height = 3.2, fig_width = 8)
+    subchunkify(chart, fig_height = 3.2, fig_width = 8, chunk_name = "evalplot_fieldbookqual_chart")
     
     probs_table <- problems_table(kpi_df, variable, problems)
     if(nrow(probs_table) > 0) {
@@ -3478,7 +3485,8 @@ for (i in seq_along(province_list)) {
   
  plot <- best_comms(kpi_df %>% filter(province_name == province_list[i]), province_list[i])
  
- subchunkify(plot, fig_height = 6)
+ chunk_name <- paste("topbar_best_radios_", i)
+ subchunkify(plot, fig_height = 6, chunk_name = chunk_name)
 
 }
 
@@ -3804,8 +3812,10 @@ for (i in seq_along(province_list)) {
              brewerpal = "Set3") + 
     
              scale_fill_hue()
+    
+    chunk_name <- paste("plot_support_dates", i)
    
-    subchunkify(plot, fig_height = height)
+    subchunkify(plot, fig_height = height, chunk_name = chunk_name)
   }
   
  
