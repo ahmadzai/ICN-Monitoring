@@ -257,7 +257,11 @@ kpi_df <- kpi_df %>%
                     ifelse(
                       tolower(str_squish(internal_other_position)) == "dmo",
                       "TPM",
-                  internal_other_position)
+                      ifelse(
+                      tolower(str_squish(internal_other_position)) == "tpm",
+                      "TPM",
+                      internal_other_position)
+                    )
                 )
              )
            )
